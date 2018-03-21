@@ -1,6 +1,5 @@
 package cl.niclabs.vpnpassiveping;
 
-import android.app.PendingIntent;
 import android.content.Intent;
 import android.net.VpnService;
 import android.os.Build;
@@ -10,7 +9,9 @@ import android.os.ParcelFileDescriptor;
 import android.util.Log;
 import android.widget.Toast;
 
+import java.io.DataOutputStream;
 import java.io.FileDescriptor;
+import java.io.IOException;
 import java.net.Inet4Address;
 import java.net.Inet6Address;
 import java.net.InetAddress;
@@ -18,24 +19,17 @@ import java.net.InetSocketAddress;
 import java.net.NetworkInterface;
 import java.net.Socket;
 import java.net.SocketException;
-import java.nio.channels.DatagramChannel;
 import java.util.Enumeration;
 
 public class AutoVpnService extends VpnService implements Handler.Callback, Runnable {
     private static final String TAG = "AutoVpnService";
 
-    private String mServerAddress;
-    private String mServerPort;
-    private PendingIntent mConfigureIntent;
-
     private Handler mHandler;
     private Thread mThread;
 
     private ParcelFileDescriptor mInterface;
-    private String mParameters;
 
-
-    public native byte[] startVPN(FileDescriptor fileDescriptor);
+    public native int startVPN(FileDescriptor fileDescriptor);
     static {
         System.loadLibrary("vpn-lib");
     }
@@ -77,52 +71,27 @@ public class AutoVpnService extends VpnService implements Handler.Callback, Runn
     public synchronized void run() {
         try {
             Log.i(TAG, "Starting");
-
-            // Reset the counter if we were connected.
             runVPN();
 
         } catch (Exception e) {
             Log.e(TAG, "Got " + e.toString());
-        } /*finally {
-            try {
-                mInterface.close();
-            } catch (Exception e) {
-                // ignore
-            }
-            mInterface = null;
-
-            mHandler.sendEmptyMessage(R.string.disconnected);
-            Log.i(TAG, "Exiting");
-        }*/
+        }
     }
 
     private boolean runVPN() throws Exception {
-        DatagramChannel tunnel = null;
         boolean connected = false;
         configure();
-        byte[] packet = startVPN(mInterface.getFileDescriptor());
-
-        StringBuilder sb = new StringBuilder();
-        for (int i=0; i<packet.length; i++) {
-            if (i%4 == 0)
-                sb.append(i/4 + String.format("\t\t%02X ", packet[i]));
-            else if ((i+1)%4 == 0)
-                sb.append(String.format("%02X\n", packet[i]));
-            else
-                sb.append(String.format("%02X ", packet[i]));
-        }
-
         try {
-            Log.i(TAG, "Packet captured:\n" + sb);
+            Process p = Runtime.getRuntime().exec("su");
 
-        } catch (Exception e) {
-            Log.e(TAG, "Got " + e.toString());
-        } finally {
-            try {
-                tunnel.close();
-            } catch (Exception e) {
-                // ignore
-            }
+            DataOutputStream dos = new DataOutputStream(p.getOutputStream());
+            dos.writeBytes("cd /data/local/tmp\n");
+            //dos.writeBytes("./create_socket\n");
+
+            int rc = startVPN(mInterface.getFileDescriptor());
+            Log.d(TAG, "start VPN: " + rc);
+
+        } catch (IOException e) {
         }
         return connected;
     }
@@ -217,16 +186,5 @@ public class AutoVpnService extends VpnService implements Handler.Callback, Runn
             return false;
         }
         return true;
-    }
-
-    public String bytesToHex(byte[] bytes) {
-        char[] hexArray = "0123456789ABCDEF".toCharArray();
-        char[] hexChars = new char[bytes.length * 2];
-        for ( int j = 0; j < bytes.length; j++ ) {
-            int v = bytes[j] & 0xFF;
-            hexChars[j * 2] = hexArray[v >>> 4];
-            hexChars[j * 2 + 1] = hexArray[v & 0x0F];
-        }
-        return new String(hexChars);
     }
 }
