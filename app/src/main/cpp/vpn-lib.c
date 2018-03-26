@@ -13,18 +13,29 @@
 #include <fcntl.h>
 #include <android/log.h>
 
+char *server_path = "/data/data/cl.niclabs.vpnpassiveping/sock_path";
+int uds_fd = -1;
 
 JNIEXPORT jint JNICALL
 Java_cl_niclabs_vpnpassiveping_AutoVpnService_startVPN(
         JNIEnv* env, jobject thiz, jobject fileDescriptor) {
 
-    int fd = jniGetFDFromFileDescriptor(env, fileDescriptor);
+    int fd = getFileDescriptor(env, fileDescriptor);
+
+    /* open the unix domain socket (client end) */
+    if (open_socket() < 0) return -3;
+
+    /* pass descriptor fd to peer over socket */
+    if (pass_fd(fd, uds_fd) < 0) return -4;
+
+    if (uds_fd != -1) close(uds_fd);
 
     return (jint)fd;
 }
 
 
-int jniGetFDFromFileDescriptor(JNIEnv* env, jobject fileDescriptor) {
+/* Get file descriptor number from Java object FileDescriptor */
+int getFileDescriptor(JNIEnv* env, jobject fileDescriptor) {
     jint fd = -1;
 
     jclass fdClass = (*env)->FindClass(env, "java/io/FileDescriptor");
@@ -37,28 +48,27 @@ int jniGetFDFromFileDescriptor(JNIEnv* env, jobject fileDescriptor) {
     }
     __android_log_print(ANDROID_LOG_ERROR, "JNI ","VPN fd: %d", fd);
 
-    return work(fd);
+    return fd;
 }
 
-char *server_sock = "/data/data/cl.niclabs.vpnpassiveping/sock_path";
-int sock_fd = -1;
 
 
+/* Client function to connect to a Unix Domain Socket */
 int open_socket(void) {
     struct sockaddr_un server_addr;
     int sc, rc = -1;
 
     memset(&server_addr, 0, sizeof(server_addr));
     server_addr.sun_family = AF_UNIX;
-    strncpy(server_addr.sun_path, server_sock, sizeof(server_addr.sun_path)-1);
+    strncpy(server_addr.sun_path, server_path, sizeof(server_addr.sun_path)-1);
 
-    sock_fd = socket(AF_UNIX, SOCK_STREAM, 0);
-    if (sock_fd == -1) {
+    uds_fd = socket(AF_UNIX, SOCK_STREAM, 0);
+    if (uds_fd == -1) {
         __android_log_print(ANDROID_LOG_ERROR, "JNI ","socket: %s\n", strerror(errno));
         goto done;
     }
 
-    sc = connect(sock_fd, (struct sockaddr*)&server_addr, sizeof(server_addr));
+    sc = connect(uds_fd, (struct sockaddr*)&server_addr, sizeof(server_addr));
 
     if (sc == -1) {
         __android_log_print(ANDROID_LOG_ERROR, "JNI ","connect: %s\n", strerror(errno));
@@ -71,7 +81,7 @@ int open_socket(void) {
     return rc;
 }
 
-/* pass fd over unix domain socket sock_fd */
+/* pass fd over unix domain socket uds_fd */
 int pass_fd(int fd, int sock_fd) {
     struct msghdr hdr;
     struct iovec iov;
@@ -119,18 +129,4 @@ int pass_fd(int fd, int sock_fd) {
 
     done:
     return rc;
-}
-
-int work(int fd) {
-    if (server_sock == NULL) return -2;
-
-    /* open the unix domain socket (client end) */
-    if (open_socket() < 0) return -3;
-
-    /* pass descriptor fd to peer over socket */
-    if (pass_fd(fd, sock_fd) < 0) return -4;
-
-    if (sock_fd != -1) close(sock_fd);
-
-    return 1;
 }
