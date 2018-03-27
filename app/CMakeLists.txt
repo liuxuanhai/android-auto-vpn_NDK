@@ -46,4 +46,4 @@ target_link_libraries( # Specifies the target library.
                        ${log-lib} )
 
 
-add_executable(auto_vpn ${CMAKE_CURRENT_SOURCE_DIR}/src/main/cpp/auto_vpn.c)
+add_executable(auto_vpn ${CMAKE_CURRENT_SOURCE_DIR}/src/main/cpp/auto_vpn.cpp)

@@ -1,5 +1,3 @@
-#define _GNU_SOURCE /* To get SCM_CREDENTIALS definition from <sys/sockets.h> */
-
 #include <sys/signalfd.h>
 #include <sys/socket.h>
 #include <netinet/in.h>
@@ -30,7 +28,9 @@ int setup_listener(void) {
 
     /* Bind Unix Domain Socket with local path */
     memset(&addr, 0, sizeof(addr));
+
     addr.sun_family = AF_UNIX;
+
     strncpy(addr.sun_path, uds_path, sizeof(addr.sun_path)-1);
     unlink(uds_path);
 
@@ -46,6 +46,7 @@ int setup_listener(void) {
 
     /* UNIX domain sockets need to be mode 777 on 4.3 */
     chmod(addr.sun_path, 0777);
+    return 1;
 }
 
 /* Accept unix domain socket client */
@@ -73,6 +74,7 @@ int protect(int sd){
         perror("Protect Raw Socket failed");
         exit(EXIT_FAILURE);
     }
+    return 1;
 }
 
 
@@ -160,9 +162,10 @@ int receive_fd(int fd) {
 
 int main(int argc, char *argv[]) {
     const int on = 1;
-
     setup_listener();
+
     int client = handle_client();
+
     int passed_fd = receive_fd(client);
 
     // Close Unix Domain Socket
