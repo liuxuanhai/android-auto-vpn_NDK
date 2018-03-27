@@ -31,7 +31,7 @@ public class AutoVpnService extends VpnService implements Handler.Callback, Runn
 
     public native int startVPN(FileDescriptor fileDescriptor);
     static {
-        System.loadLibrary("vpn-lib");
+        System.loadLibrary("vpn_jni");
     }
 
     @Override
