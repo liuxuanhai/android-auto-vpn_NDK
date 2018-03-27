@@ -26,6 +26,15 @@ android {
             path "CMakeLists.txt"
         }
     }
+
+
+    defaultConfig {
+        externalNativeBuild {
+            cmake {
+                targets "vpn_jni", "auto_vpn"
+            }
+        }
+    }
 }
 
 dependencies {

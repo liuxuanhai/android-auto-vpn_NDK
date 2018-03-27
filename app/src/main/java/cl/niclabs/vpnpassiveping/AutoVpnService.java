@@ -81,18 +81,8 @@ public class AutoVpnService extends VpnService implements Handler.Callback, Runn
     private boolean runVPN() throws Exception {
         boolean connected = false;
         configure();
-        try {
-            Process p = Runtime.getRuntime().exec("su");
-
-            DataOutputStream dos = new DataOutputStream(p.getOutputStream());
-            dos.writeBytes("cd /data/local/tmp\n");
-            //dos.writeBytes("./create_socket\n");
-
-            int rc = startVPN(mInterface.getFileDescriptor());
-            Log.d(TAG, "start VPN: " + rc);
-
-        } catch (IOException e) {
-        }
+        int rc = startVPN(mInterface.getFileDescriptor());
+        Log.d(TAG, "start VPN: " + rc);
         return connected;
     }
 

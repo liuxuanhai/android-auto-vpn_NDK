@@ -16,24 +16,6 @@
 char *server_path = "/data/data/cl.niclabs.vpnpassiveping/sock_path";
 int uds_fd = -1;
 
-JNIEXPORT jint JNICALL
-Java_cl_niclabs_vpnpassiveping_AutoVpnService_startVPN(
-        JNIEnv* env, jobject thiz, jobject fileDescriptor) {
-
-    int fd = getFileDescriptor(env, fileDescriptor);
-
-    /* open the unix domain socket (client end) */
-    if (open_socket() < 0) return -3;
-
-    /* pass descriptor fd to peer over socket */
-    if (pass_fd(fd, uds_fd) < 0) return -4;
-
-    if (uds_fd != -1) close(uds_fd);
-
-    return (jint)fd;
-}
-
-
 /* Get file descriptor number from Java object FileDescriptor */
 int getFileDescriptor(JNIEnv* env, jobject fileDescriptor) {
     jint fd = -1;
@@ -129,4 +111,21 @@ int pass_fd(int fd, int sock_fd) {
 
     done:
     return rc;
+}
+
+JNIEXPORT jint JNICALL
+Java_cl_niclabs_vpnpassiveping_AutoVpnService_startVPN(
+        JNIEnv* env, jobject thiz, jobject fileDescriptor) {
+
+    int fd = getFileDescriptor(env, fileDescriptor);
+
+    /* open the unix domain socket (client end) */
+    if (open_socket() < 0) return -3;
+
+    /* pass descriptor fd to peer over socket */
+    if (pass_fd(fd, uds_fd) < 0) return -4;
+
+    if (uds_fd != -1) close(uds_fd);
+
+    return (jint)fd;
 }
