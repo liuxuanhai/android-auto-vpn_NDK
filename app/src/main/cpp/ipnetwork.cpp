@@ -4,6 +4,7 @@
 #include <netinet/ip6.h>
 #include <time.h>
 #include "ipnetwork.h"
+#include <stdio.h>
 
 
 /* Convert an ip struct to a string. The returned buffer is internal, 
@@ -40,8 +41,10 @@
 /* looks through tcp options and finds tcp timestaps if available*/
 int options(unsigned char * packet, tcp_opt *tcp, unsigned int packet_lenght){
     int position = 20; //tcp header
-    uint8_t kind;
-    uint8_t lenght;
+    uint8_t lenght, kind;
+    uint32_t tsval_1, tsval_2, tsval_3, tsval_4;
+    uint32_t tsecr_1, tsecr_2, tsecr_3, tsecr_4;
+
     do 
     {
         kind= packet[position];
@@ -53,10 +56,23 @@ int options(unsigned char * packet, tcp_opt *tcp, unsigned int packet_lenght){
                 break;
             case 8:
                 lenght= packet[position+1];
+
                 tcp->kind = packet[position];
                 tcp->length= packet[position +1];
-                tcp->tsval= packet[position]<<24 + packet[position+1]<<16 + packet[position+2]<<8 + packet[position+3];
-                tcp->tsecr=packet[position+4]<<24 + packet[position+5]<<16 + packet[position+6]<<8 + packet[position+7];
+
+                tsval_1 = ((uint32_t)packet[position+2])<<24;
+                tsval_2 = ((uint32_t)packet[position+3])<<16;
+                tsval_3 = ((uint32_t)packet[position+4])<<8;
+                tsval_4 = ((uint32_t)packet[position+5]);
+
+                tsecr_1 = ((uint32_t)packet[position+6])<<24;
+                tsecr_2 = ((uint32_t)packet[position+7])<<16;
+                tsecr_3 = ((uint32_t)packet[position+8])<<8;
+                tsecr_4 = ((uint32_t)packet[position+9]);
+
+                tcp->tsval = tsval_1 + tsval_2 + tsval_3 + tsval_4;
+                tcp->tsecr = tsecr_1 + tsecr_2 + tsecr_3 + tsecr_4;
+
                 return 0;
             default:
                 lenght= packet[position+1];
@@ -64,7 +80,7 @@ int options(unsigned char * packet, tcp_opt *tcp, unsigned int packet_lenght){
         }
         position+=lenght;
     }
-    while( packet_lenght-position<=10);
+    while( packet_lenght-position >= 10);
     return -1;
 
 }

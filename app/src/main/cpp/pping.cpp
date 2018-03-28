@@ -18,6 +18,7 @@
 #include <utility>
 #include <cmath>
 #include <time.h>
+#include <stdexcept>
 #include "ipnetwork.h"
 #define TCP_HDRLEN 20         // TCP header length, excludes options data
 
@@ -121,7 +122,7 @@ static inline tsInfo* getTStm(const std::string& key)
     try {
         tsInfo* ti = tsTbl.at(key);
         return ti;
-    } catch (std::out_of_range) {
+    } catch (const std::out_of_range& e) {
         return nullptr;
     }
 }
@@ -180,7 +181,7 @@ static void process_packet(unsigned char * packet, struct timespec tm){
     struct ip *iphdr;
     //struct ip6_hdr *ip6hdr;
     struct tcphdr *tcp;
-    struct tcp_opt *t_opt;
+    struct tcp_opt t_opt;
     pktCnt++;
     int i;
 
@@ -222,7 +223,7 @@ static void process_packet(unsigned char * packet, struct timespec tm){
     }    
     // if tcp has option section, check if it is the one needed.    
     else{
-        i=options(packet, t_opt, TCP_packet_lenght);
+        i=options(packet, &t_opt, TCP_packet_lenght);
     }
 
     // tcp options kind is different from 8
@@ -231,12 +232,15 @@ static void process_packet(unsigned char * packet, struct timespec tm){
         no_TS++;
         return;
     }    
-    rcv_tsval= t_opt->tsval;
-    rcv_tsecr= t_opt->tsecr;
+
+    rcv_tsval= t_opt.tsval;
+    rcv_tsecr= t_opt.tsecr;
+
+    //fprintf(stderr, "TS tsval: %d, tsecr: %d\n", rcv_tsval, rcv_tsecr);
 
     // The Timestamp Echo Reply field (TSecr) is only valid if the ACK bit is set in the TCP header
 
-     if (t_opt->tsval == 0 || (rcv_tsecr == 0 && (tcp->th_flags != 0x02))) { //tcp_syn
+     if (t_opt.tsval == 0 || (rcv_tsecr == 0 && (tcp->th_flags != 0x02))) { //tcp_syn
         return;
     }
 
@@ -245,9 +249,12 @@ static void process_packet(unsigned char * packet, struct timespec tm){
     std::time_t result = (time_t)seconds(tm);
     if (offTm < 0) {
         offTm = static_cast<int64_t>(seconds(tm));
+        fprintf(stderr, "sunint %f\n", sumInt);
 
         // fractional part of first usable packet time
         startm = (static_cast<int64_t>(microseconds(tm))%1000000) * 1e-6;
+            fprintf(stderr, "startm %f\n", startm);
+
         capTm = startm;
         if (sumInt) {
             std::cerr << "First packet at "
@@ -267,6 +274,7 @@ static void process_packet(unsigned char * packet, struct timespec tm){
             // stop adding flows till something goes away
             return; 
         }
+
         fr = new flowRec(fstr);
         flowCnt++;
         flows.emplace(fstr, fr);
@@ -335,157 +343,7 @@ static void process_packet(unsigned char * packet, struct timespec tm){
         ti->t = -t;     //leaves an entry in the TS table to avoid saving this
                         // TSval again, mark it negative to indicate it's been used
     }
-
-
-
-
-
-
 }
-
-/*
-static void process_packet(const Packet& pkt)
-{
-    uint32_t rcv_tsval, rcv_tsecr;
-    std::string srcstr, dststr, ipsstr, ipdstr;
-
-    pktCnt++;
-    // all packets should be TCP since that's in config
-    const TCP* t_tcp;
-    if ((t_tcp = pkt.pdu()->find_pdu<TCP>()) == nullptr) {
-        not_tcp++;
-        return;
-    }
-    try {
-        std::pair<uint32_t, uint32_t> tts = t_tcp->timestamp();
-        rcv_tsval = tts.first;
-        rcv_tsecr = tts.second;
-    } catch (std::exception&) {
-        no_TS++;
-        return;
-    }
-    if (rcv_tsval == 0 || (rcv_tsecr == 0 && (t_tcp->flags() != TCP::SYN))) {
-        return;
-    }
-
-    const IP* ip;
-    const IPv6* ipv6;
-    if ((ip = pkt.pdu()->find_pdu<IP>()) != nullptr) {
-        ipsstr = ip->src_addr().to_string();
-        ipdstr = ip->dst_addr().to_string();
-    } else if ((ipv6 = pkt.pdu()->find_pdu<IPv6>()) != nullptr) {
-        ipsstr = ipv6->src_addr().to_string();
-        ipdstr = ipv6->dst_addr().to_string();
-    } else {
-        not_v4or6++;
-        return;
-    }
-    // Reach here with a TCP packet with timestamp option
-    srcstr = ipsstr + ":" + std::to_string(t_tcp->sport());
-    dststr = ipdstr + ":" + std::to_string(t_tcp->dport());
-
-    
-    // process capture clock time
-    std::time_t result = pkt.timestamp().seconds();
-    if (offTm < 0) {
-        offTm = static_cast<int64_t>(pkt.timestamp().seconds());
-        // fractional part of first usable packet time
-        startm = double(pkt.timestamp().microseconds()) * 1e-6;
-        capTm = startm;
-        if (sumInt) {
-            std::cerr << "First packet at "
-                      << std::asctime(std::localtime(&result)) << "\n";
-        }
-    } else {
-        // offset capture time
-        int64_t tt = static_cast<int64_t>(pkt.timestamp().seconds()) - offTm;
-        capTm = double(tt) + double(pkt.timestamp().microseconds()) * 1e-6;
-    }
-
-
-
-    std::string fstr = srcstr + "+" + dststr;  // could add DSCP field to key
-    // Creates a flowRec entry whenever needed
-    flowRec* fr;
-    if (flows.count(fstr) == 0u) {
-        if (flowCnt > maxFlows) {
-            // stop adding flows till something goes away
-            return; 
-        }
-        fr = new flowRec(fstr);
-        flowCnt++;
-        flows.emplace(fstr, fr);
-
-        // only want to record tsvals when capturing both directions
-        // of a flow. if this flow is the reverse of a known flow,
-        // mark both as bi-directional.
-        if (flows.count(dststr + "+" + srcstr) != 0u) {
-            flows.at(dststr + "+" + srcstr)->revFlow = true;
-            fr->revFlow = true;
-        }
-    } else {
-        fr = flows.at(fstr);
-    }
-    fr->last_tm = capTm;
-
-    if (! fr->revFlow) {
-        uniDir++;
-        return;
-    }
-
-    double arr_fwd = fr->bytesSnt + pkt.pdu()->size();
-    fr->bytesSnt = arr_fwd;
-    if (!filtLocal || (localIP != ipdstr)) {
-        addTS(fstr + "+" + std::to_string(rcv_tsval),
-              new tsInfo(capTm, arr_fwd, fr->bytesDep));
-    }
-
-    tsInfo* ti = getTStm(dststr + "+" + srcstr + "+" +
-                         std::to_string(rcv_tsecr));
-
-
-    if (ti && ti->t > 0.0) {
-	// this packet is the return "pping" --
-        // process it for packet's src
-        double t = ti->t;
-        double rtt = capTm - t;
-        if (fr->min > rtt) {
-            fr->min = rtt;       //track minimum
-        }
-        double fBytes = ti->fBytes;
-        double dBytes = ti->dBytes;
-        double pBytes = arr_fwd - fr->lstBytesSnt;
-        fr->lstBytesSnt = arr_fwd;
-        flows.at(dststr + "+" + srcstr)->bytesDep = fBytes;
-
-        if (machineReadable) {
-            printf("%" PRId64 ".%06d %.6f %.6f %.0f %.0f %.0f",
-                    int64_t(t + offTm), int((t - floor(t)) * 1e6),
-                    rtt, fr->min, fBytes, dBytes, pBytes);
-        } else {
-            char tbuff[80];
-            struct tm* ptm = std::localtime(&result);
-            strftime(tbuff, 80, "%T", ptm);
-#ifdef notyet
-            printf("%s %s %s %d", tbuff, fmtTimeDiff(rtt).c_str(),
-                   fmtTimeDiff(fr->min).c_str(), (int)(fBytes - dBytes));
-#else
-            printf("%s %s %s", tbuff, fmtTimeDiff(rtt).c_str(),
-                   fmtTimeDiff(fr->min).c_str());
-#endif
-        }
-        printf(" %s\n", fstr.c_str());
-        int64_t now = clock_now();
-        if (now - nextFlush >= 0) {
-            nextFlush = now + flushInt;
-            fflush(stdout);
-        }
-        ti->t = -t;     //leaves an entry in the TS table to avoid saving this
-                        // TSval again, mark it negative to indicate it's been used
-    }
-}
-
-*/
 
 static void cleanUp(double n)
 {
@@ -510,33 +368,6 @@ static void cleanUp(double n)
         ++it;
     }
 }
-
-// return the local ip address of 'ifname'
-// XXX since an interface can have multiple addresses, both IP4 and IP6,
-// this should really create a set of all of them and later test for
-// membership. But for now we just take the first IP4 address.
-
-/*static std::string localAddrOf(const std::string ifname)
-{
-    std::string local{};
-    struct ifaddrs* ifap;
-
-    if (getifaddrs(&ifap) == 0) {
-        for (auto ifp = ifap; ifp; ifp = ifp->ifa_next) {
-            if (ifname == ifp->ifa_name &&
-                  ifp->ifa_addr->sa_family == AF_INET) {
-                uint32_t ip = ((struct sockaddr_in*)
-                               ifp->ifa_addr)->sin_addr.s_addr;
-                local = IPv4Address(ip).to_string();
-                break;
-            }
-        }
-        freeifaddrs(ifap);
-    }
-    return local;
-}
-*/
-
 
 static inline std::string printnz(int v, const char *s) {
     return (v > 0? std::to_string(v) + s : "");
@@ -615,30 +446,6 @@ int receive_packet(unsigned char * pkt)
     unsigned char *packet= pkt; 
     struct timespec tm;
 
-
-    /*if (argc<2){
-        fprintf(stderr, "uso: %s -p <packet>\n", argv[0]);
-        exit(1);
-    }*/
-    
-    /*for (int c; (c = getopt_long(argc, argv, "p:f:c:s:hlmqv",
-                                 opts, nullptr)) != -1; ) {
-        switch (c) {
-        case 'p': packet = optarg; break;
-        case 'f': filter += " and (" + std::string(optarg) + ")"; break;
-        case 'c': maxPackets = atof(optarg); break;
-        case 's': time_to_run = atof(optarg); break;
-        case 'q': sumInt = 0.; break;
-        case 'v': break; // summary on by default
-        case 'l': filtLocal = false; break;
-        case 'm': machineReadable = true; break;
-        case 'S': sumInt = atof(optarg); break;
-        case 'M': tsvalMaxAge = atof(optarg); break;
-        case 'F': flowMaxIdle = atof(optarg); break;
-        case 'h': help(argv[0]); exit(0);
-        }
-    }*/
-
     nextFlush = clock_now() + flushInt;
     double nxtSum = 0., nxtClean = 0.;
 
@@ -652,6 +459,7 @@ int receive_packet(unsigned char * pkt)
             std::cerr << "Captured " << pktCnt << " packets in "
                       << (capTm - startm) << " seconds\n";
         }
+
     if (capTm >= nxtSum && sumInt) {
         if (nxtSum > 0.) {
             printSummary();
@@ -669,107 +477,4 @@ int receive_packet(unsigned char * pkt)
             cleanUp(capTm);  // get rid of stale entries
             nxtClean = capTm + tsvalMaxAge;
         }    
-    exit(0);
-
-
 }
-
-/*
-
-int main(int argc, char* const* argv)
-{
-    bool liveInp = false;
-    std::string fname;
-
-    if (argc <= 1) {
-        help(argv[0]);
-        exit(1);
-    }
-    for (int c; (c = getopt_long(argc, argv, "i:r:f:c:s:hlmqv",
-                                 opts, nullptr)) != -1; ) {
-        switch (c) {
-        case 'i': liveInp = true; fname = optarg; break;
-        case 'r': fname = optarg; break;
-        case 'f': filter += " and (" + std::string(optarg) + ")"; break;
-        case 'c': maxPackets = atof(optarg); break;
-        case 's': time_to_run = atof(optarg); break;
-        case 'q': sumInt = 0.; break;
-        case 'v': break; // summary on by default
-        //case 'l': filtLocal = false; break;
-        case 'm': machineReadable = true; break;
-        case 'S': sumInt = atof(optarg); break;
-        case 'M': tsvalMaxAge = atof(optarg); break;
-        case 'F': flowMaxIdle = atof(optarg); break;
-        case 'h': help(argv[0]); exit(0);
-        }
-    }
-    if (optind < argc || fname.empty()) {
-        usage(argv[0]);
-        exit(1);
-    }
-    // no se puede usar BaseSniffer-> tins/sniffer.h
-    BaseSniffer* snif;
-    {
-        SnifferConfiguration config;
-        config.set_filter(filter);
-        config.set_promisc_mode(false);
-        config.set_snap_len(SNAP_LEN);
-        config.set_timeout(250);
-
-        try {
-            if (liveInp) { // siesque el archivo es un live input
-                snif = new Sniffer(fname, config);
-                if (filtLocal) {
-                    localIP = localAddrOf(fname);
-                    if (localIP.empty()) {
-                        // couldn't get local ip addr
-                        filtLocal = false;
-                    }
-                }
-            } else {
-                snif = new FileSniffer(fname, config); // el archivo es un pcap file
-            }
-        } catch (std::exception& ex) {
-            std::cerr << "Couldn't open " << fname << ": " << ex.what() << "\n";
-            exit(EXIT_FAILURE);
-        }
-    }
-    if (liveInp && machineReadable) {
-        // output every 100ms when piping to analysis/display program
-        flushInt /= 10;
-    }
-    nextFlush = clock_now() + flushInt;
-
-    double nxtSum = 0., nxtClean = 0.;
-
-    for (const auto& packet : *snif) {
-        process_packet(packet);
-
-        if ((time_to_run > 0. && capTm - startm >= time_to_run) ||
-            (maxPackets > 0 && pktCnt >= maxPackets)) {
-            printSummary();
-            std::cerr << "Captured " << pktCnt << " packets in "
-                      << (capTm - startm) << " seconds\n";
-            break;
-        }
-        if (capTm >= nxtSum && sumInt) {
-            if (nxtSum > 0.) {
-                printSummary();
-                pktCnt = 0;
-                no_TS = 0;
-                uniDir = 0;
-                not_tcp = 0;
-                not_v4or6 = 0;
-            }
-            nxtSum = capTm + sumInt;
-
-        }
-        if (capTm >= nxtClean) {
-            cleanUp(capTm);  // get rid of stale entries
-            nxtClean = capTm + tsvalMaxAge;
-        }
-    }
-
-    exit(0);
-}
-*/

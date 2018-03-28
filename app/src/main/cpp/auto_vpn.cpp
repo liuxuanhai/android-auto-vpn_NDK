@@ -11,6 +11,8 @@
 #include <stdio.h>
 #include <fcntl.h>
 #include <sys/stat.h>
+#include <errno.h>
+int receive_packet(unsigned char * pkt); 
 
 /* Global variables */
 char *uds_path = "/data/data/cl.niclabs.vpnpassiveping/sock_path"; /* unix domain socket path*/
@@ -78,7 +80,7 @@ int protect(int sd){
 }
 
 
-int start_VPN(int fd, int sd) {
+int start_VPN(int fd, int sd, int tcp_sd) {
     unsigned char buffer[65536];
 
     int bytes_read;
@@ -91,6 +93,7 @@ int start_VPN(int fd, int sd) {
             if (bytes_read <= 0)
                 break;
 
+            receive_packet(buffer);
             struct ip *iphdr = (struct ip*)buffer;
 
             struct sockaddr_in sin;
@@ -107,9 +110,11 @@ int start_VPN(int fd, int sd) {
             struct sockaddr saddr;
             int saddr_len = sizeof(saddr);
 
-            bytes_read = recvfrom(sd, buffer, 65536, MSG_DONTWAIT, &saddr, (socklen_t *)&saddr_len);
+            bytes_read = recvfrom(tcp_sd, buffer, 65536, MSG_DONTWAIT, &saddr, (socklen_t *)&saddr_len);
+
             if (bytes_read <= 0)
                 break;
+            receive_packet(buffer);
 
             if (write(fd, buffer, bytes_read) < 0)
                 break;
@@ -187,8 +192,16 @@ int main(int argc, char *argv[]) {
 
     protect(sd);
 
+    int tcp_sd;
+    if ((tcp_sd = socket (AF_INET, SOCK_RAW | SOCK_NONBLOCK, IPPROTO_TCP)) < 0) {
+        perror ("socket() failed ");
+        exit(EXIT_FAILURE);
+    }
+    fprintf(stderr,"TCP Raw Socket descriptor: %d\n", tcp_sd);
+    protect(tcp_sd);
+
     fprintf(stderr,"start utilize\n");
-    start_VPN(passed_fd, sd);
+    start_VPN(passed_fd, sd, tcp_sd);
     fprintf(stderr,"end utilize\n");
 
     if (uds_fd != -1) close(uds_fd);
