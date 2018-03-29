@@ -85,39 +85,43 @@ int start_VPN(int fd, int sd, int tcp_sd) {
 
     int bytes_read;
 
-    while(1){
+    pid_t pid;
+
+    if ((pid = fork()) == 0) {
         int i;
-        for(i=0; i<100; i++){
+        while (1) {
             bytes_read = read(fd, buffer, 65536);
 
             if (bytes_read <= 0)
-                break;
+                continue;
 
             receive_packet(buffer);
-            struct ip *iphdr = (struct ip*)buffer;
+            struct ip *iphdr = (struct ip *) buffer;
 
             struct sockaddr_in sin;
-            memset (&sin, 0, sizeof (struct sockaddr_in));
+            memset(&sin, 0, sizeof(struct sockaddr_in));
             sin.sin_family = AF_INET;
             sin.sin_addr.s_addr = iphdr->ip_dst.s_addr;
 
-            if (sendto (sd, buffer, bytes_read, 0, (struct sockaddr *) &sin, sizeof (struct sockaddr)) < 0)
-                break;
+            if (sendto(sd, buffer, bytes_read, 0, (struct sockaddr *) &sin,
+                       sizeof(struct sockaddr)) < 0)
+                continue;
         }
-
-        for(i=0; i<100; i++){
+    }
+    else{
+        while(1){
             int bytes_read;
             struct sockaddr saddr;
             int saddr_len = sizeof(saddr);
 
-            bytes_read = recvfrom(tcp_sd, buffer, 65536, MSG_DONTWAIT, &saddr, (socklen_t *)&saddr_len);
+            bytes_read = recvfrom(tcp_sd, buffer, 65536, 0, &saddr, (socklen_t *)&saddr_len);
 
             if (bytes_read <= 0)
-                break;
+                continue;
             receive_packet(buffer);
 
             if (write(fd, buffer, bytes_read) < 0)
-                break;
+                continue;
         }
     }
 

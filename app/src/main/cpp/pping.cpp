@@ -318,7 +318,7 @@ static void process_packet(unsigned char * packet, struct timespec tm){
         fr->lstBytesSnt = arr_fwd;
         flows.at(dststr + "+" + srcstr)->bytesDep = fBytes;
 
-        if (machineReadable) {
+        if (!machineReadable) {
             printf("%" PRId64 ".%06d %.6f %.6f %.0f %.0f %.0f",
                     int64_t(t + offTm), int((t - floor(t)) * 1e6),
                     rtt, fr->min, fBytes, dBytes, pBytes);
