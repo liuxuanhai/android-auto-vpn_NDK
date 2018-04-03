@@ -14,6 +14,7 @@
 #include <sys/time.h>
 #include <iostream>
 #include <string>
+#include <sstream>
 #include <unordered_map>
 #include <utility>
 #include <cmath>
@@ -47,6 +48,14 @@ class flowRec
                         // departed through CP the last time an RTT was computed for this stream
     bool revFlow{};             //inidcates if a reverse flow has been seen
 };
+
+template <typename T>
+std::string to_string(T value)
+{
+    std::ostringstream os ;
+    os << value ;
+    return os.str() ;
+}
 
 class tsInfo
 {
@@ -194,7 +203,7 @@ static void process_packet(unsigned char * packet, struct timespec tm){
 
     iphdr= (struct ip*) packet;
     IP_header_length = iphdr->ip_hl * 4;
-    Packet_lenght= packet[2]<<8 +packet[3];
+    Packet_lenght = (packet[2]<<8) +packet[3];
    
 
     //ipv6 extension
@@ -211,8 +220,8 @@ static void process_packet(unsigned char * packet, struct timespec tm){
     tcp =(struct tcphdr *) packet;
     TCP_packet_lenght= (packet[12]>>4)*4;
 
-    srcstr = ipsstr + ":" + std::to_string(ntohs(tcp->th_sport));
-    dststr = ipdstr + ":" + std::to_string(ntohs(tcp->th_dport));
+    srcstr = ipsstr + ":" + to_string(ntohs(tcp->th_sport));
+    dststr = ipdstr + ":" + to_string(ntohs(tcp->th_dport));
     
     // tcp has no option section 
     // revisar esto
@@ -299,11 +308,11 @@ static void process_packet(unsigned char * packet, struct timespec tm){
     double arr_fwd = fr->bytesSnt + Packet_lenght;
     fr->bytesSnt = arr_fwd;
     if (!filtLocal || (localIP != ipdstr)) {
-        addTS(fstr + "+" + std::to_string(rcv_tsval),
+        addTS(fstr + "+" + to_string(rcv_tsval),
               new tsInfo(capTm, arr_fwd, fr->bytesDep));
     }
     tsInfo* ti = getTStm(dststr + "+" + srcstr + "+" +
-                         std::to_string(rcv_tsecr));
+                         to_string(rcv_tsecr));
     if (ti && ti->t > 0.0) {
     // this packet is the return "pping" --
         // process it for packet's src
@@ -370,7 +379,7 @@ static void cleanUp(double n)
 }
 
 static inline std::string printnz(int v, const char *s) {
-    return (v > 0? std::to_string(v) + s : "");
+    return (v > 0? to_string(v) + s : "");
 }
 
 static void printSummary()
@@ -476,5 +485,7 @@ int receive_packet(unsigned char * pkt)
     if (capTm >= nxtClean) {
             cleanUp(capTm);  // get rid of stale entries
             nxtClean = capTm + tsvalMaxAge;
-        }    
+        }
+
+    return 0;
 }

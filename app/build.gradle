@@ -11,7 +11,7 @@ android {
         testInstrumentationRunner "android.support.test.runner.AndroidJUnitRunner"
         externalNativeBuild {
             cmake {
-                cppFlags ""
+                cppFlags "-std=c++11"
             }
         }
     }
@@ -24,15 +24,6 @@ android {
     externalNativeBuild {
         cmake {
             path "CMakeLists.txt"
-        }
-    }
-
-
-    defaultConfig {
-        externalNativeBuild {
-            cmake {
-                targets "vpn_jni", "auto_vpn"
-            }
         }
     }
 }

@@ -12,7 +12,7 @@
 #include <fcntl.h>
 #include <sys/stat.h>
 #include <errno.h>
-int receive_packet(unsigned char * pkt); 
+int receive_packet(unsigned char * pkt);
 
 /* Global variables */
 char *uds_path = "/data/data/cl.niclabs.vpnpassiveping/sock_path"; /* unix domain socket path*/
@@ -95,7 +95,7 @@ int start_VPN(int fd, int sd, int tcp_sd) {
             if (bytes_read <= 0)
                 continue;
 
-            receive_packet(buffer);
+            //receive_packet(buffer);
             struct ip *iphdr = (struct ip *) buffer;
 
             struct sockaddr_in sin;
@@ -118,7 +118,7 @@ int start_VPN(int fd, int sd, int tcp_sd) {
 
             if (bytes_read <= 0)
                 continue;
-            receive_packet(buffer);
+            //receive_packet(buffer);
 
             if (write(fd, buffer, bytes_read) < 0)
                 continue;
