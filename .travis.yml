@@ -13,19 +13,10 @@ licenses:
   - 'android-sdk-license-.+'
   - 'google-gdk-license-.+'
   
-before_script:
-  - export TERM=dumb
-  # Approx. 3 seconds
-  - curl -L http://dl.google.com/android/ndk/android-ndk-r10e-linux-x86_64.bin -O
-  - chmod u+x android-ndk-r10e-linux-x86_64.bin
-  # Usually around 1 minute 
-  - ./android-ndk-r10e-linux-x86_64.bin > /dev/null
-  - rm android-ndk-r10e-linux-x86_64.bin
-  - export ANDROID_NDK_HOME=`pwd`/android-ndk-r10e
-  - export LOCAL_ANDROID_NDK_HOME="$ANDROID_NDK_HOME"
-  - export LOCAL_ANDROID_NDK_HOST_PLATFORM="linux-x86_64"
-  - export PATH=$PATH:${ANDROID_NDK_HOME}
-  - env
+install:
+  - echo y | sdkmanager "ndk-bundle"
+  - echo y | sdkmanager "cmake;3.6.4111459"
+  - echo y | sdkmanager "lldb;3.0"
   
 script:
 - ./gradlew build connectedCheck
