@@ -9,9 +9,7 @@ import android.os.ParcelFileDescriptor;
 import android.util.Log;
 import android.widget.Toast;
 
-import java.io.DataOutputStream;
 import java.io.FileDescriptor;
-import java.io.IOException;
 import java.net.Inet4Address;
 import java.net.Inet6Address;
 import java.net.InetAddress;
@@ -29,10 +27,10 @@ public class AutoVpnService extends VpnService implements Handler.Callback, Runn
 
     private ParcelFileDescriptor mInterface;
 
-    /*public native int startVPN(FileDescriptor fileDescriptor);
+    public native void startVPN(FileDescriptor fileDescriptor);
     static {
         System.loadLibrary("vpn_jni");
-    }*/
+    }
 
     @Override
     public int onStartCommand(Intent intent, int flags, int startId) {
@@ -81,8 +79,7 @@ public class AutoVpnService extends VpnService implements Handler.Callback, Runn
     private boolean runVPN() throws Exception {
         boolean connected = false;
         configure();
-        //int rc = startVPN(mInterface.getFileDescriptor());
-        //Log.d(TAG, "start VPN: " + rc);
+        startVPN(mInterface.getFileDescriptor());
         return connected;
     }
 
