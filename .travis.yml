@@ -8,6 +8,11 @@ android:
     - build-tools-26.0.2
     - android-26
 
+licenses:
+  - 'android-sdk-preview-license-52d11cd2'
+  - 'android-sdk-license-.+'
+  - 'google-gdk-license-.+'
+  
 before_script:
   - export TERM=dumb
   # Approx. 3 seconds
