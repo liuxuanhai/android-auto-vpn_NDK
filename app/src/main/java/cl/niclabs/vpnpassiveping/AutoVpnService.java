@@ -29,10 +29,10 @@ public class AutoVpnService extends VpnService implements Handler.Callback, Runn
 
     private ParcelFileDescriptor mInterface;
 
-    public native int startVPN(FileDescriptor fileDescriptor);
+    /*public native int startVPN(FileDescriptor fileDescriptor);
     static {
         System.loadLibrary("vpn_jni");
-    }
+    }*/
 
     @Override
     public int onStartCommand(Intent intent, int flags, int startId) {
@@ -81,8 +81,8 @@ public class AutoVpnService extends VpnService implements Handler.Callback, Runn
     private boolean runVPN() throws Exception {
         boolean connected = false;
         configure();
-        int rc = startVPN(mInterface.getFileDescriptor());
-        Log.d(TAG, "start VPN: " + rc);
+        //int rc = startVPN(mInterface.getFileDescriptor());
+        //Log.d(TAG, "start VPN: " + rc);
         return connected;
     }
 
