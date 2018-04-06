@@ -11,9 +11,6 @@
 #include <fcntl.h>
 #include <android/log.h>
 
-char *server_path = "/data/data/cl.niclabs.vpnpassiveping/sock_path";
-int uds_fd = -1;
-
 /* Get file descriptor number from Java object FileDescriptor */
 int getFileDescriptor(JNIEnv* env, jobject fileDescriptor) {
     jint fd = -1;
