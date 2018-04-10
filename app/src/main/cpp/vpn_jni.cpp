@@ -49,6 +49,9 @@ int getFileDescriptor(JNIEnv* env, jobject fileDescriptor) {
 
 void startSniffer(int fd){
     std::string ipSrc, ipDst;
+    std::string udpKey, tcpKey;
+    std::string srcPort, desPort
+
 
     unsigned char packet[65536];
     int bytes_read;
@@ -68,10 +71,34 @@ void startSniffer(int fd){
 
         ipSrc = inet_ntoa(ipHdr->ip_src);
         ipDst = inet_ntoa(ipHdr->ip_dst);
+        // if UDP
 
         if (packet[9] == UDP_PROTOCOL){
 
+            packet+=ipHdrLen;
+            udp =(struct udphdr *) packet;
+            srcPort= ntohs(udp->uh_sport)
+            desPort= ntohs(udp->uh_dport)
+            udpKey = "" + srcPort + "-" + ipDst + "-" + desPort;
+            VpnConnection* currentChannel;
+            channelRecovered = false;
+             try {
+                    if (udpMap.containsKey(udpKey)) 
+                    {
+                        currentChannel = udpMap.get(udpKey);
+                        currentChannel.keyFor(this.selector).attachment().updateLastPkt(uDPPacket);
+                        writeChannel(currentChannel.keyFor(this.selector), fileOutputStream, false);
+                        channelRecovered = true;
+                    }
+            } catch (Throwable e) 
+                {
+                    udpMap.remove(udpKey);
+                    channelRecovered = false;
+
+                    }
+
         }
+        // if TCP
         else if (packet[9] == TCP_PROTOCOL){
 
         }
