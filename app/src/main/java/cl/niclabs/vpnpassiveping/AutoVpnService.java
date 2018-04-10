@@ -27,7 +27,7 @@ public class AutoVpnService extends VpnService implements Handler.Callback, Runn
 
     private ParcelFileDescriptor mInterface;
 
-    public native void startVPN(FileDescriptor fileDescriptor);
+    public native int startVPN(FileDescriptor fileDescriptor);
     static {
         System.loadLibrary("vpn_jni");
     }
