@@ -18,5 +18,5 @@ typedef struct vpn_connection {
     int bytesReceived;
     int lastAckReceived;
 
-    std::queue<int> packetQueue;
+    std::queue<std::pair<uchar*, int>> packetQueue;
 } VpnConnection;
