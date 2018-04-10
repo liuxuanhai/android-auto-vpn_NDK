@@ -31,3 +31,8 @@ before_script:
   
 script:
 - ./gradlew build connectedCheck
+
+branches:
+  only:
+  - master
+  - dev
