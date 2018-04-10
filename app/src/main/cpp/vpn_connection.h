@@ -5,7 +5,7 @@
 
 typedef unsigned char uchar;
 
-typedef struct vpn_connection {
+typedef struct udp_connection {
     std::string key;
     int sd; //Socket Descriptor
     uchar protocol; // 17:UDP, 6:TCP
@@ -18,5 +18,15 @@ typedef struct vpn_connection {
     int bytesReceived;
     int lastAckReceived;
 
-    std::queue<std::pair<uchar*, int>> packetQueue;
-} VpnConnection;
+    std::queue<udphdr*> packetQueue;
+} UdpConnection;
+
+
+ public void EnqueuePkt(UdpConnection* udp, udphdr* pkt) {
+        udp->packetQueue.push(pkt);
+    }
+
+ public void updateLastPkt(UdpConnection* udp, udphdr* pkt) {
+        udp->lastTime = System.currentTimeMillis();
+        EnqueuePkt(udp,pkt);
+    }
