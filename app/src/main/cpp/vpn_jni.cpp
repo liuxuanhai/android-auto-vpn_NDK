@@ -1,14 +1,16 @@
 #include <string>
 #include <unordered_map>
+#include <sstream>
 #include <jni.h>
 #include <stdio.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
 #include <sys/epoll.h>
 #include <netinet/in.h>
-#include <unistd.h>
+#include <netinet/tcp.h>
 #include <netinet/ip.h>
 #include <arpa/inet.h>
+#include <unistd.h>
 #include <stdlib.h>
 #include <fcntl.h>
 #include <android/log.h>
@@ -19,6 +21,14 @@ bool VPN_BYTES_AVIALABLE;
 static std::unordered_map<std::string, VpnConnection*> udpMap;
 static std::unordered_map<std::string, VpnConnection*> tcpMap;
 
+
+template <typename T>
+std::string to_string(T value)
+{
+    std::ostringstream os ;
+    os << value ;
+    return os.str() ;
+}
 
 /* Get file descriptor number from Java object FileDescriptor */
 int getFileDescriptor(JNIEnv* env, jobject fileDescriptor) {
@@ -52,7 +62,9 @@ void startSniffer(int fd){
 
         uchar ipVer = packet[0] >> 4;
 
+        //TODO: ipv6
         struct ip *ipHdr= (struct ip*) packet;
+        int ipHdrLen = ipHdr->ip_hl * 4;
 
         ipSrc = inet_ntoa(ipHdr->ip_src);
         ipDst = inet_ntoa(ipHdr->ip_dst);
