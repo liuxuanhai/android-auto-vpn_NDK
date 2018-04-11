@@ -1,11 +1,13 @@
 #include <queue>
+#include <netinet/tcp.h>
+#include <netinet/udp.h>
 
 #define TCP_PROTOCOL    6
 #define UDP_PROTOCOL    17
 
 typedef unsigned char uchar;
 
-typedef struct udp_connection {
+typedef struct vpn_connection {
     std::string key;
     int sd; //Socket Descriptor
     uchar protocol; // 17:UDP, 6:TCP
@@ -19,9 +21,9 @@ typedef struct udp_connection {
     int lastAckReceived;
 
     std::queue<udphdr*> packetQueue;
-} UdpConnection;
+} VpnConnection;
 
-
+/*
  public void EnqueuePkt(UdpConnection* udp, udphdr* pkt) {
         udp->packetQueue.push(pkt);
     }
@@ -30,3 +32,4 @@ typedef struct udp_connection {
         udp->lastTime = System.currentTimeMillis();
         EnqueuePkt(udp,pkt);
     }
+*/

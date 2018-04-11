@@ -71,7 +71,7 @@ void sendPackets(VpnConnection *connection) {
 void startSniffer(int fd){
     std::string ipSrc, ipDst;
     std::string udpKey, tcpKey;
-    std::string srcPort, desPort
+    std::string srcPort, desPort;
 
 
     unsigned char packet[65536];
@@ -96,7 +96,7 @@ void startSniffer(int fd){
         // if UDP
 
         if (packet[9] == UDP_PROTOCOL){
-
+        /*
             packet+=ipHdrLen;
             udp =(struct udphdr *) packet;
             srcPort= ntohs(udp->uh_sport)
@@ -118,6 +118,7 @@ void startSniffer(int fd){
                     channelRecovered = false;
 
                     }
+        */
 
         }
         // if TCP
@@ -158,7 +159,7 @@ void startSniffer(int fd){
                 } else if(!tcpHdr->syn && tcpHdr->ack){
                     int payloadDataLen = packetLen - ipHdrLen - tcpHdrLen;
                     if(payloadDataLen > 0){
-                        tcpConnection->packetQueue.push(std::make_pair(packet, packetLen));
+                        //tcpConnection->packetQueue.push(std::make_pair(packet, packetLen));
                         sendPackets(tcpConnection);
                     } else{
 
