@@ -14,13 +14,17 @@
 #include <stdlib.h>
 #include <fcntl.h>
 #include <android/log.h>
+#include <string.h>
 #include "vpn_connection.h"
 
-bool VPN_BYTES_AVIALABLE;
+bool VPN_BYTES_AVIALABLE = true;
 
 static std::unordered_map<std::string, VpnConnection*> udpMap;
-static std::unordered_map<std::string, VpnConnection*> tcpMap;
+static std::unordered_map<std::string, TcpConnection> tcpMap;
 
+JNIEnv* jniEnv;
+jobject jObject;
+jmethodID protectMethod;
 
 template <typename T>
 std::string to_string(T value)
@@ -33,16 +37,14 @@ std::string to_string(T value)
 /* Simulates Android VpnService protect() function in order to protect
   raw socket from VPN connection. So, according to Android reference,
   "data sent through this socket will go directly to the underlying network,
-  so its traffic will not be forwarded through the VPN" */
+  so its traffic will not be forwarded through the VPN"*/
 int protect(int sd){
-    uint32_t intValue = 0x20000;
-    socklen_t len = sizeof(intValue);
-
-    if (setsockopt(sd, SOL_SOCKET, SO_MARK, &intValue, sizeof(intValue)) < 0) {
-        perror("Protect Raw Socket failed");
-        exit(EXIT_FAILURE);
+    jboolean res = jniEnv->CallBooleanMethod(jObject, protectMethod, sd);
+    if(res){
+        __android_log_print(ANDROID_LOG_ERROR, "JNI ","protected socket: %d", sd);
+        return 1;
     }
-    return 1;
+    return 0;
 }
 
 /* Get file descriptor number from Java object FileDescriptor */
@@ -62,13 +64,47 @@ int getFileDescriptor(JNIEnv* env, jobject fileDescriptor) {
     return fd;
 }
 
-void sendPackets(VpnConnection *connection) {
-    if(connection->protocol == TCP_PROTOCOL){
-        int tcpSd = connection->sd;
+void sendPackets(VpnConnection *connection, int vpnFd) {
+    if(connection->getProtocol() == TCP_PROTOCOL){
+        TcpConnection *tcpConnection = (TcpConnection*) connection;
+        int tcpSd = tcpConnection->getSocket();
+
+        while (!tcpConnection->queue.empty()){
+            uchar* ipPacket = tcpConnection->queue.front();
+
+            //TODO: ipv6
+            struct ip *ipHdr= (struct ip*) ipPacket;
+            int ipHdrLen = ipHdr->ip_hl * 4;
+            int packetLen = ipHdr->ip_len;
+
+            tcphdr* tcpHdr = (tcphdr*) ipPacket + ipHdrLen;
+
+            int tcpHdrLen = tcpHdr->doff * 4;
+            int payloadDataLen = packetLen - ipHdrLen - tcpHdrLen;
+
+            if(tcpHdr->seq >= tcpConnection->currAck) {
+                uchar* packetData = ipPacket + ipHdrLen + tcpHdrLen;
+                int bytesSent = 0;
+
+                bytesSent += send(tcpSd, packetData, payloadDataLen, 0);
+
+                if(bytesSent < payloadDataLen){
+
+                } else{
+                    __android_log_print(ANDROID_LOG_ERROR, "JNI ","Sending packet");
+
+                    tcpConnection->queue.pop();
+                    tcpConnection->currAck += bytesSent;
+                    tcpConnection->receiveAck(vpnFd, TH_ACK);
+                }
+            } else{
+                tcpConnection->queue.pop();
+            }
+        }
     }
 }
 
-void startSniffer(int fd){
+void startSniffer(int fd) {
     std::string ipSrc, ipDst;
     std::string udpKey, tcpKey;
     std::string srcPort, desPort;
@@ -80,11 +116,11 @@ void startSniffer(int fd){
         bytes_read = read(fd, packet, 65536);
 
         if (bytes_read <= 0){
-            VPN_BYTES_AVIALABLE = false;
-            break;
+            //VPN_BYTES_AVIALABLE = false;
+            continue;
         }
 
-        uchar ipVer = packet[0] >> 4;
+        uint8_t ipVer = packet[0] >> 4;
 
         //TODO: ipv6
         struct ip *ipHdr= (struct ip*) packet;
@@ -123,46 +159,72 @@ void startSniffer(int fd){
         }
         // if TCP
         else if (packet[9] == TCP_PROTOCOL){
-            struct tcphdr *tcpHdr = (struct tcphdr *) packet + ipHdrLen;
+
+            struct tcphdr *tcpHdr = (struct tcphdr *) (packet + ipHdrLen);
             int tcpHdrLen = tcpHdr->doff * 4;
+            int payloadDataLen = packetLen - ipHdrLen - tcpHdrLen;
 
 
             ipSrc = ipSrc + ":" + to_string(ntohs(tcpHdr->source));
             ipDst = ipDst + ":" + to_string(ntohs(tcpHdr->dest));
 
+            __android_log_print(ANDROID_LOG_ERROR, "JNI ","TCP Packet to: %s %d", ipDst.c_str(), payloadDataLen);
+
             std::string tcpKey = ipSrc + "+" + ipDst;
 
-            VpnConnection *tcpConnection;
             if(tcpMap.count(tcpKey) == 0){
+                __android_log_print(ANDROID_LOG_ERROR, "JNI ","Not found key: %s %x", ipDst.c_str(), tcpHdr->th_flags & 0xff);
+
                 if(tcpHdr->syn && !tcpHdr->ack){
-                    int tcpSd = socket(AF_INET, SOCK_STREAM | SOCK_NONBLOCK, 0);
+                    __android_log_print(ANDROID_LOG_ERROR, "JNI ","Creating socket for: %s", ipDst.c_str());
+
+                    int tcpSd = socket(AF_INET, SOCK_STREAM, 0);
                     protect(tcpSd);
+                    __android_log_print(ANDROID_LOG_ERROR, "JNI ","Creating socket for: %s", ipDst.c_str());
 
                     struct sockaddr_in sin;
                     sin.sin_family = AF_INET;
                     sin.sin_addr.s_addr = ipHdr->ip_dst.s_addr;
                     sin.sin_port = htons(tcpHdr->dest);
 
-                    connect(tcpSd, (struct sockaddr *)&sin, sizeof(sin));
+                    int res = connect(tcpSd, (struct sockaddr *)&sin, sizeof(sin));
+
+                    __android_log_print(ANDROID_LOG_ERROR, "JNI ","Connect socket for: %s %d", ipDst.c_str(), res);
+
+
+                    TcpConnection tcpConnection (tcpKey, tcpSd, *tcpHdr, true, payloadDataLen);
 
                     tcpMap.insert(std::make_pair(tcpKey, tcpConnection));
 
+                } else if(tcpHdr->fin || tcpHdr->ack){
+                    TcpConnection tcpConnection (tcpKey, NULL, *tcpHdr, false, payloadDataLen);
+                    tcpConnection.currAck++;
+                    tcpConnection.receiveAck(fd, TH_RST);
+
                 }
             } else {
-                tcpConnection = tcpMap.at(tcpKey);
-                int tcpSd = tcpConnection->sd;
+                TcpConnection tcpConnection = tcpMap.at(tcpKey);
+                int tcpSd = tcpConnection.getSocket();
 
                 if(tcpHdr->fin){
+                    tcpConnection.updateLastPacket(tcpHdr, payloadDataLen);
 
+                    tcpConnection.currAck++;
+                    tcpConnection.receiveAck(fd, TH_ACK & TH_FIN);
+                    close(tcpSd);
+                    tcpMap.erase(tcpKey);
                 } else if(tcpHdr->rst){
-
+                    tcpConnection.receiveAck(fd, TH_RST);
+                    close(tcpSd);
+                    tcpMap.erase(tcpKey);
                 } else if(!tcpHdr->syn && tcpHdr->ack){
-                    int payloadDataLen = packetLen - ipHdrLen - tcpHdrLen;
                     if(payloadDataLen > 0){
-                        //tcpConnection->packetQueue.push(std::make_pair(packet, packetLen));
-                        sendPackets(tcpConnection);
+                        uchar* newPacket = (uchar*)malloc(packetLen);
+                        memcpy(newPacket, packet, packetLen);
+                        tcpConnection.queue.push(newPacket);
+                        sendPackets(&tcpConnection, fd);
                     } else{
-
+                        tcpConnection.updateLastPacket(tcpHdr, payloadDataLen);
                     }
 
                 }
@@ -179,6 +241,10 @@ extern "C" {
     JNIEXPORT jint JNICALL
     Java_cl_niclabs_vpnpassiveping_AutoVpnService_startVPN(
             JNIEnv *env, jobject thiz, jobject fileDescriptor) {
+        jniEnv = env;
+        jObject = thiz;
+        jclass clazz = env->FindClass("cl/niclabs/vpnpassiveping/AutoVpnService");
+        protectMethod = env->GetMethodID(clazz, "protect", "(I)Z");
 
         int fd = getFileDescriptor(env, fileDescriptor);
 
