@@ -19,7 +19,7 @@
 
 bool VPN_BYTES_AVIALABLE = true;
 
-static std::unordered_map<std::string, VpnConnection*> udpMap;
+static std::unordered_map<std::string, VpnConnection> udpMap;
 static std::unordered_map<std::string, TcpConnection> tcpMap;
 
 JNIEnv* jniEnv;
@@ -107,7 +107,6 @@ void sendPackets(VpnConnection *connection, int vpnFd) {
 void startSniffer(int fd) {
     std::string ipSrc, ipDst;
     std::string udpKey, tcpKey;
-    std::string srcPort, desPort;
 
 
     unsigned char packet[65536];
@@ -132,30 +131,48 @@ void startSniffer(int fd) {
         // if UDP
 
         if (packet[9] == UDP_PROTOCOL){
-        /*
+
             packet+=ipHdrLen;
-            udp =(struct udphdr *) packet;
-            srcPort= ntohs(udp->uh_sport)
-            desPort= ntohs(udp->uh_dport)
-            udpKey = "" + srcPort + "-" + ipDst + "-" + desPort;
-            VpnConnection* currentChannel;
+            struct udphdr* udpHdr =(struct udphdr *) (packet + ipHDrLen);
+            ipSrc = ipSrc + ":" + to_string(ntohs(udpHdr->uh_sport));
+            ipDst = ipDst + ":" + to_string(ntohs(udpHdr->uh_dport));
+            std::string udpKey = ipSrc + "+" + ipDst;
+
+            UdpConnection udpConnection;
             channelRecovered = false;
-             try {
-                    if (udpMap.containsKey(udpKey)) 
-                    {
-                        currentChannel = udpMap.get(udpKey);
-                        currentChannel.keyFor(this.selector).attachment().updateLastPkt(uDPPacket);
-                        writeChannel(currentChannel.keyFor(this.selector), fileOutputStream, false);
-                        channelRecovered = true;
+
+            if (udpMap.count(udpKey)==0){
+                __android_log_print(ANDROID_LOG_ERROR, "JNI ","Not found key: %s", ipDst.c_str());
+                }
+            if(udpMap.count(udpKey!=0){
+                udpConnection = udpMap.at(udpKey);
+                uchar* newPacket = (uchar*)malloc(packetLen);
+                memcpy(newPacket, packet, packetLen);
+                udpConnection.updateLastPkt(newPacket);
+                sendPackets(&udpConnection, fd);
+                channelRecovered = true;
                     }
-            } catch (Throwable e) 
-                {
-                    udpMap.remove(udpKey);
-                    channelRecovered = false;
+            if (!channelRecovered) {
+
+                void * address_as_void
+                int i = inet_pton(AF_INET, ipHdr->ip_dst, address_as_void);
+
+                __android_log_print(ANDROID_LOG_ERROR, "JNI ","Not a valid address : %s, %d", ipDst.c_str(), i);
+
+                if (*((long *) address_as_void)< (long)3758096384 ||*((long)* address_as_void)> (long)4026531839) {
+                    int tcpSd = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+                    protect(tcpSd);
+                    struct sockaddr_in sin;
+                    sin.sin_family = AF_INET;
+                    sin.sin_addr.s_addr = ipHdr->ip_dst.s_addr;
+                    sin.sin_port = htons(udpHdr->uh_dport);
+                    int res = connect(udpSd, (struct sockaddr *)&sin, sizeof(sin));
+
+                    __android_log_print(ANDROID_LOG_ERROR, "JNI ","Connect socket for: %s %d", ipDst.c_str(), res);
+                    udpConnection (udpKey, udpSd);
+                    udpMap.insert(std::make_pair(udpKey, udpConnection));
 
                     }
-        */
-
         }
         // if TCP
         else if (packet[9] == TCP_PROTOCOL){

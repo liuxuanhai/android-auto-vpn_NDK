@@ -1,6 +1,7 @@
 #include <queue>
 #include <netinet/tcp.h>
 #include <netinet/udp.h>
+#include <time.h>
 
 #define TCP_PROTOCOL    6
 #define UDP_PROTOCOL    17
@@ -66,13 +67,31 @@ public:
     }
 };
 
-/*
- public void EnqueuePkt(UdpConnection* udp, udphdr* pkt) {
-        udp->packetQueue.push(pkt);
-    }
 
- public void updateLastPkt(UdpConnection* udp, udphdr* pkt) {
-        udp->lastTime = System.currentTimeMillis();
-        EnqueuePkt(udp,pkt);
-    }
-*/
+
+class UdpConnection : public VpnConnection {
+
+public:
+
+    double lastTime;
+
+    double timeNow_millis(void) {
+        struct timespec tm;
+        clock_gettime(CLOCK_REALTIME, &tm);
+        return 1000.0 * tm.tv_sec + (double)tm.tv_nsec/ 1e6;
+                    }
+
+
+    UdpConnection(std::string mKey, int mSd) : VpnConnection(mKey, mSd, UDP_PROTOCOL){
+        lastTime= timeNow_millis();
+
+     }
+
+    void updateLastPkt(uchar* pkt) {
+             lastTime= timeNow_millis();
+             queue.push(pkt);
+         }
+
+};
+
+
