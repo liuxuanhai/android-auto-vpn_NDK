@@ -19,7 +19,7 @@
 
 bool VPN_BYTES_AVIALABLE = true;
 
-static std::unordered_map<std::string, VpnConnection> udpMap;
+static std::unordered_map<std::string, UdpConnection> udpMap;
 static std::unordered_map<std::string, TcpConnection> tcpMap;
 
 JNIEnv* jniEnv;
@@ -131,21 +131,17 @@ void startSniffer(int fd) {
         // if UDP
 
         if (packet[9] == UDP_PROTOCOL){
-
-            packet+=ipHdrLen;
-            struct udphdr* udpHdr =(struct udphdr *) (packet + ipHDrLen);
+            struct udphdr* udpHdr =(struct udphdr *) (packet + ipHdrLen);
             ipSrc = ipSrc + ":" + to_string(ntohs(udpHdr->uh_sport));
             ipDst = ipDst + ":" + to_string(ntohs(udpHdr->uh_dport));
             std::string udpKey = ipSrc + "+" + ipDst;
-
-            UdpConnection udpConnection;
-            channelRecovered = false;
+            bool channelRecovered = false;
 
             if (udpMap.count(udpKey)==0){
                 __android_log_print(ANDROID_LOG_ERROR, "JNI ","Not found key: %s", ipDst.c_str());
                 }
-            if(udpMap.count(udpKey!=0){
-                udpConnection = udpMap.at(udpKey);
+            if(udpMap.count(udpKey)!=0){
+                UdpConnection udpConnection = udpMap.at(udpKey);
                 uchar* newPacket = (uchar*)malloc(packetLen);
                 memcpy(newPacket, packet, packetLen);
                 udpConnection.updateLastPkt(newPacket);
@@ -154,14 +150,14 @@ void startSniffer(int fd) {
                     }
             if (!channelRecovered) {
 
-                void * address_as_void
-                int i = inet_pton(AF_INET, ipHdr->ip_dst, address_as_void);
+                void * address_as_void;
+                int i = inet_pton(AF_INET, inet_ntoa(ipHdr->ip_dst), address_as_void);
 
                 __android_log_print(ANDROID_LOG_ERROR, "JNI ","Not a valid address : %s, %d", ipDst.c_str(), i);
 
-                if (*((long *) address_as_void)< (long)3758096384 ||*((long)* address_as_void)> (long)4026531839) {
-                    int tcpSd = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
-                    protect(tcpSd);
+                if (*((long *) address_as_void)< (long)3758096384 ||*((long*)address_as_void)> (long)4026531839) {
+                    int udpSd = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+                    protect(udpSd);
                     struct sockaddr_in sin;
                     sin.sin_family = AF_INET;
                     sin.sin_addr.s_addr = ipHdr->ip_dst.s_addr;
@@ -169,10 +165,11 @@ void startSniffer(int fd) {
                     int res = connect(udpSd, (struct sockaddr *)&sin, sizeof(sin));
 
                     __android_log_print(ANDROID_LOG_ERROR, "JNI ","Connect socket for: %s %d", ipDst.c_str(), res);
-                    udpConnection (udpKey, udpSd);
+                    UdpConnection udpConnection(udpKey, udpSd);
                     udpMap.insert(std::make_pair(udpKey, udpConnection));
 
                     }
+            }
         }
         // if TCP
         else if (packet[9] == TCP_PROTOCOL){
@@ -254,7 +251,7 @@ void startSniffer(int fd) {
 
 
 
-extern "C" {
+extern "C"{
     JNIEXPORT jint JNICALL
     Java_cl_niclabs_vpnpassiveping_AutoVpnService_startVPN(
             JNIEnv *env, jobject thiz, jobject fileDescriptor) {

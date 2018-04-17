@@ -70,22 +70,24 @@ public:
 
 
 class UdpConnection : public VpnConnection {
+    double lastTime;
 
 public:
 
-    double lastTime;
 
     double timeNow_millis(void) {
         struct timespec tm;
         clock_gettime(CLOCK_REALTIME, &tm);
         return 1000.0 * tm.tv_sec + (double)tm.tv_nsec/ 1e6;
-                    }
-
+    }
 
     UdpConnection(std::string mKey, int mSd) : VpnConnection(mKey, mSd, UDP_PROTOCOL){
+        key = mKey;
+        sd = mSd;
         lastTime= timeNow_millis();
 
      }
+
 
     void updateLastPkt(uchar* pkt) {
              lastTime= timeNow_millis();
