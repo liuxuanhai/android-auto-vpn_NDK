@@ -65,6 +65,38 @@ int getFileDescriptor(JNIEnv* env, jobject fileDescriptor) {
 }
 
 void sendPackets(VpnConnection *connection, int vpnFd) {
+
+    if(connection->getProtocol() == UDP_PROTOCOL) {
+        UdpConnection *udpConnection= (UdpConnection*) connection;
+        int udpSd= udpConnection->getSocket();
+
+        while (!udpConnection->queue.empty()){
+        //mandar solo datagram info
+            uchar* ipPacket = udpConnection->queue.front();
+            struct ip *ipHdr= (struct ip*) ipPacket;
+            int ipHdrLen = ipHdr->ip_hl * 4;
+            int packetLen = ipHdr->ip_len;
+            udphdr* udpHdr = (udphdr*) ipPacket + ipHdrLen;
+            int udpHdrLen = udpHdr->uh_ulen * 4;
+            int payloadDataLen = packetLen - ipHdrLen - udpHdrLen;
+            uchar* packetData = ipPacket + ipHdrLen + udpHdrLen;
+            int bytesSent = 0;
+            bytesSent += send(udpSd, packetData, payloadDataLen, 0);
+            if(bytesSent < payloadDataLen){
+
+            }
+            else {
+                __android_log_print(ANDROID_LOG_ERROR, "JNI ", "UDP Sending packet");
+                udpConnection->queue.pop();
+            }
+
+
+
+
+        }
+
+
+    }
     if(connection->getProtocol() == TCP_PROTOCOL){
         TcpConnection *tcpConnection = (TcpConnection*) connection;
         int tcpSd = tcpConnection->getSocket();
@@ -104,6 +136,7 @@ void sendPackets(VpnConnection *connection, int vpnFd) {
     }
 }
 
+
 void startSniffer(int fd) {
     std::string ipSrc, ipDst;
     std::string udpKey, tcpKey;
@@ -138,8 +171,8 @@ void startSniffer(int fd) {
             bool channelRecovered = false;
 
             if (udpMap.count(udpKey)==0){
-                __android_log_print(ANDROID_LOG_ERROR, "JNI ","Not found key: %s", ipDst.c_str());
-                }
+                __android_log_print(ANDROID_LOG_ERROR, "JNI ","UDP Not found key: %s", ipDst.c_str());
+            }
             if(udpMap.count(udpKey)!=0){
                 UdpConnection udpConnection = udpMap.at(udpKey);
                 uchar* newPacket = (uchar*)malloc(packetLen);
@@ -147,31 +180,25 @@ void startSniffer(int fd) {
                 udpConnection.updateLastPkt(newPacket);
                 sendPackets(&udpConnection, fd);
                 channelRecovered = true;
-                    }
+            }
             if (!channelRecovered) {
 
-                void * address_as_void;
-                int i = inet_pton(AF_INET, inet_ntoa(ipHdr->ip_dst), address_as_void);
+                int udpSd = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+                protect(udpSd);
+                struct sockaddr_in sin;
+                sin.sin_family = AF_INET;
+                sin.sin_addr.s_addr = ipHdr->ip_dst.s_addr;
+                sin.sin_port = htons(udpHdr->uh_dport);
+                int res = connect(udpSd, (struct sockaddr *)&sin, sizeof(sin));
 
-                __android_log_print(ANDROID_LOG_ERROR, "JNI ","Not a valid address : %s, %d", ipDst.c_str(), i);
+                __android_log_print(ANDROID_LOG_ERROR, "JNI ","UDP Connect socket for: %s %d", ipDst.c_str(), res);
+                UdpConnection udpConnection(udpKey, udpSd);
+                udpMap.insert(std::make_pair(udpKey, udpConnection));
 
-                if (*((long *) address_as_void)< (long)3758096384 ||*((long*)address_as_void)> (long)4026531839) {
-                    int udpSd = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
-                    protect(udpSd);
-                    struct sockaddr_in sin;
-                    sin.sin_family = AF_INET;
-                    sin.sin_addr.s_addr = ipHdr->ip_dst.s_addr;
-                    sin.sin_port = htons(udpHdr->uh_dport);
-                    int res = connect(udpSd, (struct sockaddr *)&sin, sizeof(sin));
 
-                    __android_log_print(ANDROID_LOG_ERROR, "JNI ","Connect socket for: %s %d", ipDst.c_str(), res);
-                    UdpConnection udpConnection(udpKey, udpSd);
-                    udpMap.insert(std::make_pair(udpKey, udpConnection));
-
-                    }
             }
         }
-        // if TCP
+            // if TCP
         else if (packet[9] == TCP_PROTOCOL){
 
             struct tcphdr *tcpHdr = (struct tcphdr *) (packet + ipHdrLen);
@@ -252,18 +279,18 @@ void startSniffer(int fd) {
 
 
 extern "C"{
-    JNIEXPORT jint JNICALL
-    Java_cl_niclabs_vpnpassiveping_AutoVpnService_startVPN(
-            JNIEnv *env, jobject thiz, jobject fileDescriptor) {
-        jniEnv = env;
-        jObject = thiz;
-        jclass clazz = env->FindClass("cl/niclabs/vpnpassiveping/AutoVpnService");
-        protectMethod = env->GetMethodID(clazz, "protect", "(I)Z");
+JNIEXPORT jint JNICALL
+Java_cl_niclabs_vpnpassiveping_AutoVpnService_startVPN(
+        JNIEnv *env, jobject thiz, jobject fileDescriptor) {
+    jniEnv = env;
+    jObject = thiz;
+    jclass clazz = env->FindClass("cl/niclabs/vpnpassiveping/AutoVpnService");
+    protectMethod = env->GetMethodID(clazz, "protect", "(I)Z");
 
-        int fd = getFileDescriptor(env, fileDescriptor);
+    int fd = getFileDescriptor(env, fileDescriptor);
 
-        startSniffer(fd);
+    startSniffer(fd);
 
-        return (jint) fd;
-    }
+    return (jint) fd;
+}
 }
