@@ -174,6 +174,8 @@ public:
 
 class UdpConnection : public VpnConnection {
     double lastTime;
+    iphdr * LastIpPacket;
+    udphdr * LastUdpPacket;
 
 public:
 
@@ -184,9 +186,13 @@ public:
         return 1000.0 * tm.tv_sec + (double)tm.tv_nsec/ 1e6;
     }
 
-    UdpConnection(std::string mKey, int mSd) : VpnConnection(mKey, mSd, UDP_PROTOCOL){
+    UdpConnection(std::string mKey, int mSd, uint8_t *packet, uint16_t ipHdrLen,
+                  uint16_t udpHdrLen) : VpnConnection(mKey, mSd, UDP_PROTOCOL){
         key = mKey;
         sd = mSd;
+        memcpy(lastPacket, packet, ipHdrLen + udpHdrLen);
+        LastIpPacket=(iphdr *) lastPacket;
+        LastUdpPacket=(udphdr *) (lastPacket + ipHdrLen);
         lastTime= timeNow_millis();
 
     }
@@ -196,6 +202,9 @@ public:
         lastTime= timeNow_millis();
         queue.push(pkt);
     }
+
+    udphdr* getLastUdpPacket() { return LastUdpPacket; }
+    iphdr* getLastIpPacket() { return LastIpPacket; }
 
 };
 

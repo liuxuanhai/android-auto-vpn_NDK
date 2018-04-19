@@ -92,8 +92,6 @@ void sendPackets(VpnConnection *connection, int vpnFd) {
             }
 
 
-
-
         }
 
 
@@ -143,6 +141,25 @@ void sendPackets(VpnConnection *connection, int vpnFd) {
     }
 }
 
+void readPackets(VpnConnection *connection, int vpnFd) {
+
+    if (connection->getProtocol() == UDP_PROTOCOL) {
+        UdpConnection *udpConnection = (UdpConnection *) connection;
+        int udpSd = udpConnection->getSocket();
+        unsigned char packet[65536];
+        int bytes_read= read(udpSd,packet,65556);
+        if(bytes_read>0){
+            udphdr* lastUdpHdr= udpConnection->getLastUdpPacket();
+
+
+        }
+
+
+
+
+    }
+}
+
 
 void startSniffer(int fd) {
     std::string ipSrc, ipDst;
@@ -172,6 +189,7 @@ void startSniffer(int fd) {
 
         if (packet[9] == UDP_PROTOCOL){
             struct udphdr* udpHdr =(struct udphdr *) (packet + ipHdrLen);
+            int udpHdrLen = udpHdr->uh_ulen * 4;
             ipSrc = ipSrc + ":" + to_string(ntohs(udpHdr->uh_sport));
             ipDst = ipDst + ":" + to_string(ntohs(udpHdr->uh_dport));
             std::string udpKey = ipSrc + "+" + ipDst;
@@ -199,7 +217,7 @@ void startSniffer(int fd) {
                 int res = connect(udpSd, (struct sockaddr *)&sin, sizeof(sin));
 
                 __android_log_print(ANDROID_LOG_ERROR, "JNI ","UDP Connect socket for: %s %d", ipDst.c_str(), res);
-                UdpConnection udpConnection(udpKey, udpSd);
+                UdpConnection udpConnection(udpKey, udpSd,packet, ipHdrLen, udpHdrLen);
                 udpMap.insert(std::make_pair(udpKey, udpConnection));
 
 
