@@ -3,13 +3,6 @@
 #include <netinet/udp.h>
 #include <time.h>
 
-#define TCP_PROTOCOL    6
-#define UDP_PROTOCOL    17
-
-typedef unsigned char uchar;
-
-
-
 /* Compute checksum for count bytes starting at addr, using one's complement of one's complement sum*/
 
 static unsigned short compute_checksum(unsigned short *addr, unsigned int count) {
@@ -77,33 +70,65 @@ void compute_tcp_checksum(struct iphdr *pIph, unsigned short *ipPayload) {
     tcphdrp->check = (unsigned short)sum;
 }
 
+int getWindowScale(tcphdr *tcpHdr){
+    int position = 20; //tcp header
+    int tcpHdrLen = tcpHdr->doff * 4;
+    uint8_t kind, length;
+
+    if (tcpHdrLen > 20)
+        do{
+            kind= ((uint8_t*)tcpHdr)[position];
+            if (kind == 0 || kind == 1)
+                length = 1;
+            else {
+                length = ((uint8_t*)tcpHdr)[position + 1];
+                if (kind == 3 && length == 3)
+                    return ((uint8_t*)tcpHdr)[position + 2];
+            }
+            position += length;
+        }
+        while(tcpHdrLen-position >= 3);
+    return 0;
+
+}
+
 class VpnConnection {
 
 protected:
     std::string key;
     int sd; //Socket Descriptor
-    uchar protocol; // 17:UDP, 6:TCP
+    uint8_t protocol; // 17:UDP, 6:TCP
 
 public:
+    uint8_t customHeaders[IP_MAXPACKET];
+    uint8_t dataReceived[IP_MAXPACKET - 40];
     uint8_t lastPacket[IP_MAXPACKET];
 
-    std::queue<uchar*> queue;
+    std::queue<uint8_t*> queue;
 
-    VpnConnection(std::string mKey, int mSd, uchar mProtocol) {
+    VpnConnection(std::string mKey, int mSd, uint8_t mProtocol) {
         key = mKey;
         sd = mSd;
         protocol = mProtocol;
     }
 
-    uchar getProtocol() { return protocol; }
+    uint8_t getProtocol() { return protocol; }
     int getSocket() { return sd; }
 };
 
 class TcpConnection : public VpnConnection {
-    int bytesSent, bytesReceived;
-    tcphdr lastHdr;
 
 public:
+    uint32_t currAck;
+    uint32_t currSeq;
+    uint32_t lastAckSent;
+
+    int bytesReceived;
+    uint32_t baseSeq;
+
+    uint16_t currPeerWindow;
+    uint16_t S_WSS;
+    int lastBytesReceived;
 
     void changeHeader(struct ip* ipHdr, struct tcphdr* tcpHdr) {
 
@@ -119,27 +144,29 @@ public:
     }
 
     TcpConnection(std::string mKey, int mSd, uint8_t *packet,
-                  bool newKey, uint16_t ipHdrLen, uint16_t tcpHdrLen, uint16_t payloadDataLen) : VpnConnection(mKey, mSd, TCP_PROTOCOL){
+                  bool newKey, uint16_t ipHdrLen, uint16_t tcpHdrLen, uint16_t payloadDataLen) : VpnConnection(mKey, mSd, IPPROTO_TCP){
         key = mKey;
         sd = mSd;
         struct tcphdr* tcpHdr = (struct tcphdr*) (packet + ipHdrLen);
-        memcpy(lastPacket, packet, ipHdrLen + tcpHdrLen);
-        changeHeader((ip *) lastPacket, (tcphdr *) (lastPacket + ipHdrLen));
+        memcpy(customHeaders, packet, ipHdrLen + tcpHdrLen);
+        changeHeader((ip *) customHeaders, (tcphdr *) (customHeaders + ipHdrLen));
+        baseSeq = 2092188733;
         if(newKey){
             currAck = ntohl(tcpHdr->seq) + 1;
-            currSeq = 2092188733;
+            currSeq = baseSeq;
         } else {
             currAck = ntohl(tcpHdr->seq) + payloadDataLen;
-            currSeq = ntohl(tcpHdr->ack);
+            currSeq = ntohl(tcpHdr->ack_seq);
         }
-        //lastHdr = tcpHdr;
+        bytesReceived = 0;
+        lastBytesReceived = 0;
+        currPeerWindow = ntohs(tcpHdr->window);
+        S_WSS = getWindowScale(tcpHdr);
     }
 
-    uint32_t currAck;
-
     void receiveAck(int vpnFd, uint8_t controlFlags){
-        struct iphdr* ipHdr = (struct iphdr*) lastPacket;
-        struct tcphdr* tcpHdr = (struct tcphdr*) (lastPacket + 20);
+        struct iphdr* ipHdr = (struct iphdr*) customHeaders;
+        struct tcphdr* tcpHdr = (struct tcphdr*) (customHeaders + 20);
 
         ipHdr->tot_len = htons(40);
         compute_ip_checksum(ipHdr);
@@ -152,28 +179,63 @@ public:
         char buffer [81];
         buffer[80] = 0;
         for(int j = 0; j < 40; j++)
-            sprintf(&buffer[2*j], "%02X", lastPacket[j]);
-        __android_log_print(ANDROID_LOG_ERROR, "JNI ","receive: %s %d\n", buffer, controlFlags & 0xff);
+            sprintf(&buffer[2*j], "%02X", customHeaders[j]);
+        __android_log_print(ANDROID_LOG_ERROR, "JNI ","TCP receive: %s %d\n", buffer, controlFlags & 0xff);
 
-        write(vpnFd, lastPacket, 40);
+        write(vpnFd, customHeaders, 40);
     }
 
-    uint32_t currSeq;
-    uint32_t lastAckReceived;
+    void receiveData(int vpnFd, int packetLen){
+        struct iphdr* ipHdr = (struct iphdr*) customHeaders;
+        struct tcphdr* tcpHdr = (struct tcphdr*) (customHeaders + 20);
+
+        ipHdr->id += htons(1);
+        ipHdr->tot_len = htons(40 + packetLen);
+        compute_ip_checksum(ipHdr);
+
+        tcpHdr->th_flags = TH_ACK | TH_PUSH;
+        tcpHdr->ack_seq = htonl(currAck);
+        tcpHdr->seq = htonl(currSeq);
+        memcpy((customHeaders + 40), dataReceived, packetLen);
+        compute_tcp_checksum(ipHdr, (unsigned short *) tcpHdr);
+
+        char buffer [2*(40 + packetLen)+1];
+        buffer[2*(40 + packetLen)] = 0;
+        for(int j = 0; j < (40 + packetLen); j++)
+            sprintf(&buffer[2*j], "%02X\n", customHeaders[j]);
+
+        __android_log_print(ANDROID_LOG_ERROR, "JNI ","TCP receiveData: %s\n", buffer);
+
+        write(vpnFd, customHeaders, (40 + packetLen));
+    }
 
     void updateLastPacket(tcphdr *tcpHdr, int payloadDataLen) {
         currAck += payloadDataLen;
         if (ntohl(tcpHdr->ack_seq) > currSeq)
             currSeq = ntohl(tcpHdr->ack_seq);
-        if (ntohl(tcpHdr->ack_seq) > lastAckReceived)
-            lastAckReceived = ntohl(tcpHdr->ack_seq);
+        if (ntohl(tcpHdr->ack_seq) > lastAckSent)
+            lastAckSent = ntohl(tcpHdr->ack_seq);
+        currPeerWindow = ntohs(tcpHdr->window);
     }
+
+    int bytesAcked(){
+        if (lastAckSent > 0)
+            return (lastAckSent - baseSeq) -1;
+        return 0;
+    }
+
+    int getAdjustedCurrPeerWindowSize() {
+        return currPeerWindow << S_WSS;
+    }
+
 };
 
 
 
 class UdpConnection : public VpnConnection {
     double lastTime;
+    iphdr * LastIpPacket;
+    udphdr * LastUdpPacket;
 
 public:
 
@@ -184,18 +246,25 @@ public:
         return 1000.0 * tm.tv_sec + (double)tm.tv_nsec/ 1e6;
     }
 
-    UdpConnection(std::string mKey, int mSd) : VpnConnection(mKey, mSd, UDP_PROTOCOL){
+    UdpConnection(std::string mKey, int mSd, uint8_t *packet, uint16_t ipHdrLen,
+                  uint16_t udpHdrLen) : VpnConnection(mKey, mSd, IPPROTO_UDP){
         key = mKey;
         sd = mSd;
+        memcpy(lastPacket, packet, ipHdrLen + udpHdrLen);
+        LastIpPacket=(iphdr *) lastPacket;
+        LastUdpPacket=(udphdr *) (lastPacket + ipHdrLen);
         lastTime= timeNow_millis();
 
     }
 
 
-    void updateLastPkt(uchar* pkt) {
+    void updateLastPkt(uint8_t* pkt) {
         lastTime= timeNow_millis();
         queue.push(pkt);
     }
+
+    udphdr* getLastUdpPacket() { return LastUdpPacket; }
+    iphdr* getLastIpPacket() { return LastIpPacket; }
 
 };
 
