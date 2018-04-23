@@ -28,8 +28,7 @@ jobject jObject;
 jmethodID protectMethod;
 
 template <typename T>
-std::string to_string(T value)
-{
+std::string to_string(T value){
     std::ostringstream os ;
     os << value ;
     return os.str() ;
@@ -69,20 +68,20 @@ void receivePackets(VpnConnection *connection, int vpnFd);
 
 void sendPackets(VpnConnection *connection, int vpnFd) {
 
-    if(connection->getProtocol() == UDP_PROTOCOL) {
+    if(connection->getProtocol() == IPPROTO_UDP) {
         UdpConnection *udpConnection= (UdpConnection*) connection;
         int udpSd= udpConnection->getSocket();
 
         while (!udpConnection->queue.empty()){
             //mandar solo datagram info
-            uchar* ipPacket = udpConnection->queue.front();
+            uint8_t* ipPacket = udpConnection->queue.front();
             struct ip *ipHdr= (struct ip*) ipPacket;
             int ipHdrLen = ipHdr->ip_hl * 4;
             int packetLen = ipHdr->ip_len;
             udphdr* udpHdr = (udphdr*) ipPacket + ipHdrLen;
             int udpHdrLen = udpHdr->uh_ulen * 4;
             int payloadDataLen = packetLen - ipHdrLen - udpHdrLen;
-            uchar* packetData = ipPacket + ipHdrLen + udpHdrLen;
+            uint8_t* packetData = ipPacket + ipHdrLen + udpHdrLen;
             int bytesSent = 0;
             bytesSent += send(udpSd, packetData, payloadDataLen, 0);
             if(bytesSent < payloadDataLen){
@@ -95,14 +94,14 @@ void sendPackets(VpnConnection *connection, int vpnFd) {
         }
     }
 
-    if(connection->getProtocol() == TCP_PROTOCOL){
+    if(connection->getProtocol() == IPPROTO_TCP){
 
         TcpConnection *tcpConnection = (TcpConnection*) connection;
         int tcpSd = tcpConnection->getSocket();
 
         while (!tcpConnection->queue.empty()){
 
-            uchar* ipPacket = tcpConnection->queue.front();
+            uint8_t* ipPacket = tcpConnection->queue.front();
 
             //TODO: ipv6
             struct ip *ipHdr= (struct ip*) ipPacket;
@@ -119,7 +118,7 @@ void sendPackets(VpnConnection *connection, int vpnFd) {
 
             if(ntohl(tcpHdr->seq) >= tcpConnection->currAck) {
 
-                uchar* packetData = ipPacket + ipHdrLen + tcpHdrLen;
+                uint8_t* packetData = ipPacket + ipHdrLen + tcpHdrLen;
                 int bytesSent = 0;
 
                 bytesSent += send(tcpSd, packetData, payloadDataLen, 0);
@@ -153,7 +152,7 @@ void sendPackets(VpnConnection *connection, int vpnFd) {
 
 void receivePackets(VpnConnection *connection, int vpnFd) {
 
-    if(connection->getProtocol() == UDP_PROTOCOL) {
+    if(connection->getProtocol() == IPPROTO_UDP) {
         UdpConnection *udpConnection = (UdpConnection *) connection;
         int udpSd = udpConnection->getSocket();
         unsigned char packet[65536];
@@ -164,7 +163,7 @@ void receivePackets(VpnConnection *connection, int vpnFd) {
 
         }
     }
-    if(connection->getProtocol() == TCP_PROTOCOL){
+    if(connection->getProtocol() == IPPROTO_TCP){
         __android_log_print(ANDROID_LOG_ERROR, "JNI ","TCP read");
 
         TcpConnection *tcpConnection = (TcpConnection*) connection;
@@ -203,10 +202,7 @@ void receivePackets(VpnConnection *connection, int vpnFd) {
 
         tcpConnection->receiveData(vpnFd, packetLen);
 
-        __android_log_print(ANDROID_LOG_ERROR, "JNI ","TCP seq change: %d\n", tcpConnection->currSeq);
-
         tcpConnection->currSeq += packetLen;
-        __android_log_print(ANDROID_LOG_ERROR, "JNI ","TCP seq change: %d\n", tcpConnection->currSeq);
 
         tcpConnection->bytesReceived += packetLen;
     }
@@ -238,7 +234,7 @@ void startSniffer(int fd) {
         ipDst = inet_ntoa(ipHdr->ip_dst);
         // if UDP
 
-        if (packet[9] == UDP_PROTOCOL){
+        if (packet[9] == IPPROTO_UDP){
             struct udphdr* udpHdr =(struct udphdr *) (packet + ipHdrLen);
             int udpHdrLen = udpHdr->uh_ulen * 4;
             ipSrc = ipSrc + ":" + to_string(ntohs(udpHdr->uh_sport));
@@ -251,7 +247,7 @@ void startSniffer(int fd) {
             }
             if(udpMap.count(udpKey)!=0){
                 UdpConnection udpConnection = udpMap.at(udpKey);
-                uchar* newPacket = (uchar*)malloc(packetLen);
+                uint8_t* newPacket = (uint8_t*)malloc(packetLen);
                 memcpy(newPacket, packet, packetLen);
                 udpConnection.updateLastPkt(newPacket);
                 sendPackets(&udpConnection, fd);
@@ -275,7 +271,7 @@ void startSniffer(int fd) {
             }
         }
             // if TCP
-        else if (packet[9] == TCP_PROTOCOL){
+        else if (packet[9] == IPPROTO_TCP){
 
             struct tcphdr *tcpHdr = (struct tcphdr *) (packet + ipHdrLen);
             int tcpHdrLen = tcpHdr->doff * 4;
@@ -358,7 +354,7 @@ void startSniffer(int fd) {
                     __android_log_print(ANDROID_LOG_ERROR, "JNI ","TCP ACK Packet to: %s %d", ipDst.c_str(), payloadDataLen);
 
                     if(payloadDataLen > 0){
-                        uchar* newPacket = (uchar*)malloc(packetLen);
+                        uint8_t* newPacket = (uint8_t*)malloc(packetLen);
                         memcpy(newPacket, packet, packetLen);
                         tcpConnection->queue.push(newPacket);
                         sendPackets(tcpConnection, fd);
@@ -378,7 +374,6 @@ void startSniffer(int fd) {
 
                 }
                 __android_log_print(ANDROID_LOG_ERROR, "JNI ","TCP else Packet to: %s %x", ipDst.c_str(), tcpHdr->th_flags & 0xff);
-                tcpMap[tcpKey] = tcpConnection;
 
             }
 
