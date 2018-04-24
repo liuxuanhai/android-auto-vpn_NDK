@@ -70,6 +70,11 @@ void compute_tcp_checksum(struct iphdr *pIph, unsigned short *ipPayload) {
     tcphdrp->check = (unsigned short)sum;
 }
 
+/* set udp checksum: given IP header and udp segment */
+void compute_udp_checksum(struct iphdr *pIph, unsigned short *ipPayload){
+    //to-do
+}
+
 int getWindowScale(tcphdr *tcpHdr){
     int position = 20; //tcp header
     int tcpHdrLen = tcpHdr->doff * 4;
@@ -233,12 +238,26 @@ public:
 
 
 class UdpConnection : public VpnConnection {
-    double lastTime;
-    iphdr * LastIpPacket;
-    udphdr * LastUdpPacket;
 
 public:
+    double lastTime;
+    ip* LastIpPacket;
+    udphdr * LastUdpPacket;
 
+    void changeHeader(struct ip* ipHdr, struct udphdr* udpHdr) {
+
+        struct in_addr auxIp = ipHdr->ip_src;
+        // in_addr only for ipv4
+        ipHdr->ip_src = ipHdr->ip_dst;
+        ipHdr->ip_dst = auxIp;
+        LastIpPacket=ipHdr;
+
+        uint16_t auxPort= udpHdr->uh_sport;
+        udpHdr->uh_sport = udpHdr->uh_dport;
+        udpHdr->uh_dport = auxPort;
+        LastUdpPacket= udpHdr;
+
+    }
 
     double timeNow_millis(void) {
         struct timespec tm;
@@ -250,13 +269,23 @@ public:
                   uint16_t udpHdrLen) : VpnConnection(mKey, mSd, IPPROTO_UDP){
         key = mKey;
         sd = mSd;
-        memcpy(lastPacket, packet, ipHdrLen + udpHdrLen);
-        LastIpPacket=(iphdr *) lastPacket;
-        LastUdpPacket=(udphdr *) (lastPacket + ipHdrLen);
+        memcpy(customHeaders, packet, ipHdrLen + udpHdrLen);
+        changeHeader((ip *) customHeaders, (udphdr *) (customHeaders + ipHdrLen));
         lastTime= timeNow_millis();
 
     }
+    void receiveData(int vpnFd, int packetLen) {
+        struct iphdr *ipHdr = (struct iphdr *) customHeaders;
+        struct udphdr *udpHdr = (struct udphdr *) (customHeaders + 20);
 
+        ipHdr->id += htons(1);
+        ipHdr->tot_len = htons(40 + packetLen);
+        compute_ip_checksum(ipHdr);
+        memcpy((customHeaders + 40), dataReceived, packetLen);
+
+        compute_udp_checksum(ipHdr, (unsigned short *) udpHdr);
+        write(vpnFd, customHeaders, (40 + packetLen));
+    }
 
     void updateLastPkt(uint8_t* pkt) {
         lastTime= timeNow_millis();
@@ -264,7 +293,7 @@ public:
     }
 
     udphdr* getLastUdpPacket() { return LastUdpPacket; }
-    iphdr* getLastIpPacket() { return LastIpPacket; }
+    ip* getLastIpPacket() { return LastIpPacket; }
 
 };
 

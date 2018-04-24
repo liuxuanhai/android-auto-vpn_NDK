@@ -73,20 +73,25 @@ void sendPackets(VpnConnection *connection, int vpnFd) {
         int udpSd= udpConnection->getSocket();
 
         while (!udpConnection->queue.empty()){
+
             //mandar solo datagram info
+
             uint8_t* ipPacket = udpConnection->queue.front();
             struct ip *ipHdr= (struct ip*) ipPacket;
             int ipHdrLen = ipHdr->ip_hl * 4;
             int packetLen = ipHdr->ip_len;
             udphdr* udpHdr = (udphdr*) ipPacket + ipHdrLen;
             int udpHdrLen = udpHdr->uh_ulen * 4;
+
             int payloadDataLen = packetLen - ipHdrLen - udpHdrLen;
             uint8_t* packetData = ipPacket + ipHdrLen + udpHdrLen;
             int bytesSent = 0;
             bytesSent += send(udpSd, packetData, payloadDataLen, 0);
+
             if(bytesSent < payloadDataLen){
                 break;
             }
+
             else {
                 //__android_log_print(ANDROID_LOG_ERROR, "JNI ", "UDP Sending packet");
                 udpConnection->queue.pop();
@@ -155,11 +160,14 @@ void receivePackets(VpnConnection *connection, int vpnFd) {
     if(connection->getProtocol() == IPPROTO_UDP) {
         UdpConnection *udpConnection = (UdpConnection *) connection;
         int udpSd = udpConnection->getSocket();
-        unsigned char packet[65536];
-        int bytes_read= read(udpSd,packet,65556);
+        int bytes_read= recv(udpSd, udpConnection->dataReceived, IP_MAXPACKET - 40, 0);
+        if (bytes_read< 0)
+            return;
+        __android_log_print(ANDROID_LOG_ERROR, "JNI ","UDP read %d", bytes_read);
+
         if(bytes_read>0){
-            udphdr* lastUdpHdr= udpConnection->getLastUdpPacket();
-            //changes
+
+            udpConnection->receiveData(vpnFd, bytes_read);
 
         }
     }
