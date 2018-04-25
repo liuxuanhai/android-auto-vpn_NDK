@@ -95,7 +95,6 @@ int getWindowScale(tcphdr *tcpHdr){
 class VpnConnection {
 
 protected:
-    std::string key;
     int sd; //Socket Descriptor
     uint8_t protocol; // 17:UDP, 6:TCP
 
@@ -103,6 +102,7 @@ public:
     uint8_t customHeaders[IP_MAXPACKET];
     uint8_t dataReceived[IP_MAXPACKET - 40];
     uint8_t lastPacket[IP_MAXPACKET];
+    struct epoll_event ev;
 
     std::queue<uint8_t*> queue;
 
@@ -114,6 +114,8 @@ public:
 
     uint8_t getProtocol() { return protocol; }
     int getSocket() { return sd; }
+
+    std::string key;
 };
 
 class TcpConnection : public VpnConnection {
@@ -129,6 +131,8 @@ public:
     uint16_t currPeerWindow;
     uint16_t S_WSS;
     int lastBytesReceived;
+
+    bool connected;
 
     void changeHeader(struct ip* ipHdr, struct tcphdr* tcpHdr) {
 
@@ -162,6 +166,7 @@ public:
         lastBytesReceived = 0;
         currPeerWindow = ntohs(tcpHdr->window);
         S_WSS = getWindowScale(tcpHdr);
+        connected = false;
     }
 
     void receiveAck(int vpnFd, uint8_t controlFlags){
