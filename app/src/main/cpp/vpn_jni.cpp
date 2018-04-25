@@ -168,15 +168,11 @@ void receivePackets(VpnConnection *connection, int vpnFd) {
         UdpConnection *udpConnection = (UdpConnection *) connection;
         int udpSd = udpConnection->getSocket();
         int bytes_read= recv(udpSd, udpConnection->dataReceived, IP_MAXPACKET - 40, 0);
-        if (bytes_read< 0)
+        if (bytes_read <= 0)
             return;
         __android_log_print(ANDROID_LOG_ERROR, "JNI ","UDP read %d", bytes_read);
 
-        if(bytes_read>0){
-
-            udpConnection->receiveData(vpnFd, bytes_read);
-
-        }
+        udpConnection->receiveData(vpnFd, bytes_read);
     }
     if(connection->getProtocol() == IPPROTO_TCP){
 
