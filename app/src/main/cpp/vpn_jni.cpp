@@ -22,7 +22,7 @@ bool VPN_BYTES_AVIALABLE = true;
 bool RUNNING = true;
 int epollFd;
 
-static std::unordered_map<std::string, UdpConnection> udpMap;
+static std::unordered_map<std::string, UdpConnection*> udpMap;
 static std::unordered_map<std::string, TcpConnection*> tcpMap;
 
 JNIEnv* jniEnv;
@@ -73,34 +73,27 @@ void sendPackets(VpnConnection *connection, int vpnFd) {
     __android_log_print(ANDROID_LOG_ERROR, "JNI ","SendPackets");
 
     if(connection->getProtocol() == IPPROTO_UDP) {
+
         UdpConnection *udpConnection= (UdpConnection*) connection;
         int udpSd= udpConnection->getSocket();
 
         while (!udpConnection->queue.empty()){
 
             //mandar solo datagram info
-
             uint8_t* ipPacket = udpConnection->queue.front();
             struct ip *ipHdr= (struct ip*) ipPacket;
             int ipHdrLen = ipHdr->ip_hl * 4;
             int packetLen = ipHdr->ip_len;
-            udphdr* udpHdr = (udphdr*) ipPacket + ipHdrLen;
-            int udpHdrLen = udpHdr->uh_ulen * 4;
+            int udpHdrLen = 8;
 
             int payloadDataLen = packetLen - ipHdrLen - udpHdrLen;
             uint8_t* packetData = ipPacket + ipHdrLen + udpHdrLen;
-            int bytesSent = 0;
-            bytesSent += send(udpSd, packetData, payloadDataLen, 0);
+            int bytesSent = send(udpSd, packetData, payloadDataLen, 0);
 
-            if(bytesSent < payloadDataLen){
-                break;
-            }
+            udpConnection->queue.pop();
 
-            else {
-                //__android_log_print(ANDROID_LOG_ERROR, "JNI ", "UDP Sending packet");
-                udpConnection->queue.pop();
-            }
         }
+
     }
 
     if(connection->getProtocol() == IPPROTO_TCP){
@@ -273,35 +266,39 @@ void startSniffer(int fd) {
                 ipSrc = ipSrc + ":" + to_string(ntohs(udpHdr->uh_sport));
                 ipDst = ipDst + ":" + to_string(ntohs(udpHdr->uh_dport));
                 std::string udpKey = ipSrc + "+" + ipDst;
-                bool channelRecovered = false;
 
                 if (udpMap.count(udpKey) == 0) {
-                    //__android_log_print(ANDROID_LOG_ERROR, "JNI ","UDP Not found key: %s", ipDst.c_str());
-                }
-                if (udpMap.count(udpKey) != 0) {
-                    UdpConnection udpConnection = udpMap.at(udpKey);
-                    uint8_t *newPacket = (uint8_t *) malloc(packetLen);
-                    memcpy(newPacket, packet, packetLen);
-                    udpConnection.updateLastPkt(newPacket);
-                    sendPackets(&udpConnection, fd);
-                    channelRecovered = true;
-                }
-                if (!channelRecovered) {
-
-                    int udpSd = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+                    int udpSd = socket(AF_INET, SOCK_DGRAM | SOCK_NONBLOCK, IPPROTO_UDP);
                     protect(udpSd);
                     struct sockaddr_in sin;
                     sin.sin_family = AF_INET;
                     sin.sin_addr.s_addr = ipHdr->ip_dst.s_addr;
-                    sin.sin_port = htons(udpHdr->uh_dport);
+                    sin.sin_port = udpHdr->uh_dport;
                     int res = connect(udpSd, (struct sockaddr *) &sin, sizeof(sin));
 
                     __android_log_print(ANDROID_LOG_ERROR, "JNI ", "UDP Connect socket for: %s %d",
                                         ipDst.c_str(), res);
-                    UdpConnection udpConnection(udpKey, udpSd, packet, ipHdrLen, udpHdrLen);
+                    UdpConnection *udpConnection = new UdpConnection(udpKey, udpSd, packet, ipHdrLen, udpHdrLen);
                     udpMap.insert(std::make_pair(udpKey, udpConnection));
+                    udpConnection->ev.events = EPOLLIN;
+                    udpConnection->ev.data.ptr = udpConnection;
 
+                    uint8_t *newPacket = (uint8_t *) malloc(packetLen);
+                    memcpy(newPacket, packet, packetLen);
+                    udpConnection->queue.push(newPacket);
+                    sendPackets(udpConnection, fd);
 
+                    if (epoll_ctl(epollFd, EPOLL_CTL_ADD, udpSd, &udpConnection->ev) == -1) {
+                        perror("epoll_ctl: listen_sock");
+                        exit(EXIT_FAILURE);
+                    }
+                    sendPackets(udpConnection, fd);
+                } else {
+                    UdpConnection *udpConnection = udpMap.at(udpKey);
+                    uint8_t *newPacket = (uint8_t *) malloc(packetLen);
+                    memcpy(newPacket, packet, packetLen);
+                    udpConnection->queue.push(newPacket);
+                    sendPackets(udpConnection, fd);
                 }
             }
                 // if TCP

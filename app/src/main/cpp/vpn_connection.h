@@ -301,16 +301,12 @@ public:
         struct udphdr *udpHdr = (struct udphdr *) (customHeaders + 20);
 
         ipHdr->id += htons(1);
-        ipHdr->tot_len = htons(40 + packetLen);
+        ipHdr->tot_len = htons(28 + packetLen);
         compute_ip_checksum(ipHdr);
-        memcpy((customHeaders + 40), dataReceived, packetLen);
+        memcpy((customHeaders + 28), dataReceived, packetLen);
 
         compute_udp_checksum(ipHdr, (unsigned short *) udpHdr);
-        write(vpnFd, customHeaders, (40 + packetLen));
-    }
-
-    void updateLastPkt(uint8_t* pkt) {
-        queue.push(pkt);
+        write(vpnFd, customHeaders, (28 + packetLen));
     }
 
 };
