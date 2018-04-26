@@ -66,11 +66,16 @@ int getFileDescriptor(JNIEnv* env, jobject fileDescriptor) {
     return fd;
 }
 
+
+
+
+
 void receivePackets(VpnConnection *connection, int vpnFd);
 void connectSocket(TcpConnection *connection, int vpnFd);
+void getRTT(TcpConnection *connection);
 
 void sendPackets(VpnConnection *connection, int vpnFd) {
-    __android_log_print(ANDROID_LOG_ERROR, "JNI ","SendPackets");
+
 
     if(connection->getProtocol() == IPPROTO_UDP) {
 
@@ -89,6 +94,7 @@ void sendPackets(VpnConnection *connection, int vpnFd) {
             int payloadDataLen = packetLen - ipHdrLen - udpHdrLen;
             uint8_t* packetData = ipPacket + ipHdrLen + udpHdrLen;
             int bytesSent = send(udpSd, packetData, payloadDataLen, 0);
+            __android_log_print(ANDROID_LOG_ERROR, "JNI ","UDP Sending packet %d %d %d", packetLen, ipHdrLen, udpHdrLen);
 
             udpConnection->queue.pop();
 
@@ -154,17 +160,36 @@ void sendPackets(VpnConnection *connection, int vpnFd) {
     }
 }
 
+void  getRTT(TcpConnection* tcpConnection){
+    int tcpSd= tcpConnection->getSocket();
+    struct tcp_info ti;
+    socklen_t tisize = sizeof(ti);
+    getsockopt(tcpSd, IPPROTO_TCP, TCP_INFO, &ti, &tisize);
+    u_int32_t  rtt= ti.tcpi_rtt;
 
+    /* copy tcpconnection key into chararray*/
+    std::string key = tcpConnection->key;
+    char *c_key = new char[key.length() + 1];
+    strcpy(c_key, key.c_str());
+
+    /* open a file and write results into it*/
+
+    FILE *fp = fopen("rtts.txt", "ab+");
+    fprintf(fp,"%s:","%zu\n",c_key, rtt);
+    printf("%s:","%zu\n", c_key, rtt);
+    fclose(fp);
+}
 void receivePackets(VpnConnection *connection, int vpnFd) {
 
     if(connection->getProtocol() == IPPROTO_UDP) {
         UdpConnection *udpConnection = (UdpConnection *) connection;
         int udpSd = udpConnection->getSocket();
-        int bytes_read= recv(udpSd, udpConnection->dataReceived, IP_MAXPACKET - 40, 0);
-        if (bytes_read <= 0)
+        int bytes_read= recv(udpSd, udpConnection->dataReceived, IP_MAXPACKET - 28, 0);
+        if (bytes_read <= 0) {
+            __android_log_print(ANDROID_LOG_ERROR, "JNI ","bytes read %d", bytes_read);
             return;
+        }
         __android_log_print(ANDROID_LOG_ERROR, "JNI ","UDP read %d", bytes_read);
-
         udpConnection->receiveData(vpnFd, bytes_read);
     }
     if(connection->getProtocol() == IPPROTO_TCP){
@@ -261,6 +286,7 @@ void startSniffer(int fd) {
             // if UDP
 
             if (packet[9] == IPPROTO_UDP) {
+
                 struct udphdr *udpHdr = (struct udphdr *) (packet + ipHdrLen);
                 int udpHdrLen = udpHdr->uh_ulen * 4;
                 ipSrc = ipSrc + ":" + to_string(ntohs(udpHdr->uh_sport));
@@ -292,8 +318,9 @@ void startSniffer(int fd) {
                         perror("epoll_ctl: listen_sock");
                         exit(EXIT_FAILURE);
                     }
-                    sendPackets(udpConnection, fd);
-                } else {
+                    //sendPackets(udpConnection, fd);
+                    }
+                else {
                     UdpConnection *udpConnection = udpMap.at(udpKey);
                     uint8_t *newPacket = (uint8_t *) malloc(packetLen);
                     memcpy(newPacket, packet, packetLen);

@@ -292,6 +292,7 @@ public:
 
     UdpConnection(std::string mKey, int mSd, uint8_t *packet, uint16_t ipHdrLen,
                   uint16_t udpHdrLen) : VpnConnection(mKey, mSd, IPPROTO_UDP){
+
         memcpy(customHeaders, packet, ipHdrLen + udpHdrLen);
         changeHeader((ip *) customHeaders, (udphdr *) (customHeaders + ipHdrLen));
 
