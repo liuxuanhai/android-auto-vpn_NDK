@@ -306,6 +306,7 @@ public:
         compute_ip_checksum(ipHdr);
         memcpy((customHeaders + 28), dataReceived, packetLen);
 
+        udpHdr->len = htons(packetLen + 8);
         compute_udp_checksum(ipHdr, (unsigned short *) udpHdr);
         write(vpnFd, customHeaders, (28 + packetLen));
     }
