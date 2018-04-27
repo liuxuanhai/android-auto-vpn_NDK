@@ -88,7 +88,7 @@ void sendPackets(VpnConnection *connection, int vpnFd) {
             uint8_t* ipPacket = udpConnection->queue.front();
             struct ip *ipHdr= (struct ip*) ipPacket;
             int ipHdrLen = ipHdr->ip_hl * 4;
-            int packetLen = ipHdr->ip_len;
+            int packetLen = ntohs(ipHdr->ip_len);
             int udpHdrLen = 8;
 
             int payloadDataLen = packetLen - ipHdrLen - udpHdrLen;
@@ -172,12 +172,14 @@ void  getRTT(TcpConnection* tcpConnection){
     char *c_key = new char[key.length() + 1];
     strcpy(c_key, key.c_str());
 
-    /* open a file and write results into it*/
+    __android_log_print(ANDROID_LOG_ERROR, "JNI ","TCP RTT %s %d", c_key, rtt);
 
+    /* open a file and write results into it*/
+/*
     FILE *fp = fopen("rtts.txt", "ab+");
     fprintf(fp,"%s:","%zu\n",c_key, rtt);
     printf("%s:","%zu\n", c_key, rtt);
-    fclose(fp);
+    fclose(fp);*/
 }
 void receivePackets(VpnConnection *connection, int vpnFd) {
 
@@ -220,6 +222,7 @@ void receivePackets(VpnConnection *connection, int vpnFd) {
             epoll_ctl(epollFd, EPOLL_CTL_DEL, tcpSd, &tcpConnection->ev);
             tcpMap.erase(tcpConnection->key);
             delete tcpConnection;
+            return;
         }
 
         if (packetLen < 0)
@@ -239,6 +242,7 @@ void receivePackets(VpnConnection *connection, int vpnFd) {
         tcpConnection->currSeq += packetLen;
 
         tcpConnection->bytesReceived += packetLen;
+        getRTT(tcpConnection);
     }
 }
 
@@ -318,7 +322,7 @@ void startSniffer(int fd) {
                         perror("epoll_ctl: listen_sock");
                         exit(EXIT_FAILURE);
                     }
-                    //sendPackets(udpConnection, fd);
+                    sendPackets(udpConnection, fd);
                     }
                 else {
                     UdpConnection *udpConnection = udpMap.at(udpKey);
