@@ -70,6 +70,44 @@ void compute_tcp_checksum(struct iphdr *pIph, unsigned short *ipPayload) {
     tcphdrp->check = (unsigned short)sum;
 }
 
+/* set udp checksum: given IP header and udp segment */
+void compute_udp_checksum(struct iphdr *pIph, unsigned short *ipPayload){
+    register unsigned long sum = 0;
+    unsigned short udpLen = ntohs(pIph->tot_len) - (pIph->ihl<<2);
+    struct udphdr *udphdrp = (struct udphdr*)(ipPayload);
+    //add the pseudo header
+    //the source ip
+    sum += (pIph->saddr>>16)&0xFFFF;
+    sum += (pIph->saddr)&0xFFFF;
+    //the dest ip
+    sum += (pIph->daddr>>16)&0xFFFF;
+    sum += (pIph->daddr)&0xFFFF;
+    //protocol and reserved: 6
+    sum += htons(IPPROTO_UDP);
+    //the length
+    sum += htons(udpLen);
+
+    //add the IP payload
+    //initialize checksum to 0
+    udphdrp->check = 0;
+    while (udpLen > 1) {
+        sum += * ipPayload++;
+        udpLen -= 2;
+    }
+    //if any bytes left, pad the bytes and add
+    if(udpLen > 0) {
+        //printf("+++++++++++padding, %dn", tcpLen);
+        sum += ((*ipPayload)&htons(0xFF00));
+    }
+    //Fold 32-bit sum to 16 bits: add carrier to result
+    while (sum>>16) {
+        sum = (sum & 0xffff) + (sum >> 16);
+    }
+    sum = ~sum;
+    //set computation result
+    udphdrp->check = (unsigned short)sum;
+}
+
 int getWindowScale(tcphdr *tcpHdr){
     int position = 20; //tcp header
     int tcpHdrLen = tcpHdr->doff * 4;
@@ -95,14 +133,13 @@ int getWindowScale(tcphdr *tcpHdr){
 class VpnConnection {
 
 protected:
-    std::string key;
     int sd; //Socket Descriptor
     uint8_t protocol; // 17:UDP, 6:TCP
 
 public:
     uint8_t customHeaders[IP_MAXPACKET];
     uint8_t dataReceived[IP_MAXPACKET - 40];
-    uint8_t lastPacket[IP_MAXPACKET];
+    struct epoll_event ev;
 
     std::queue<uint8_t*> queue;
 
@@ -114,6 +151,8 @@ public:
 
     uint8_t getProtocol() { return protocol; }
     int getSocket() { return sd; }
+
+    std::string key;
 };
 
 class TcpConnection : public VpnConnection {
@@ -129,6 +168,8 @@ public:
     uint16_t currPeerWindow;
     uint16_t S_WSS;
     int lastBytesReceived;
+
+    bool connected;
 
     void changeHeader(struct ip* ipHdr, struct tcphdr* tcpHdr) {
 
@@ -162,6 +203,7 @@ public:
         lastBytesReceived = 0;
         currPeerWindow = ntohs(tcpHdr->window);
         S_WSS = getWindowScale(tcpHdr);
+        connected = false;
     }
 
     void receiveAck(int vpnFd, uint8_t controlFlags){
@@ -233,38 +275,41 @@ public:
 
 
 class UdpConnection : public VpnConnection {
-    double lastTime;
-    iphdr * LastIpPacket;
-    udphdr * LastUdpPacket;
 
 public:
 
+    void changeHeader(struct ip* ipHdr, struct udphdr* udpHdr) {
 
-    double timeNow_millis(void) {
-        struct timespec tm;
-        clock_gettime(CLOCK_REALTIME, &tm);
-        return 1000.0 * tm.tv_sec + (double)tm.tv_nsec/ 1e6;
+        struct in_addr auxIp = ipHdr->ip_src;
+        // in_addr only for ipv4
+        ipHdr->ip_src = ipHdr->ip_dst;
+        ipHdr->ip_dst = auxIp;
+
+        uint16_t auxPort= udpHdr->uh_sport;
+        udpHdr->uh_sport = udpHdr->uh_dport;
+        udpHdr->uh_dport = auxPort;
     }
 
     UdpConnection(std::string mKey, int mSd, uint8_t *packet, uint16_t ipHdrLen,
                   uint16_t udpHdrLen) : VpnConnection(mKey, mSd, IPPROTO_UDP){
-        key = mKey;
-        sd = mSd;
-        memcpy(lastPacket, packet, ipHdrLen + udpHdrLen);
-        LastIpPacket=(iphdr *) lastPacket;
-        LastUdpPacket=(udphdr *) (lastPacket + ipHdrLen);
-        lastTime= timeNow_millis();
+
+        memcpy(customHeaders, packet, ipHdrLen + udpHdrLen);
+        changeHeader((ip *) customHeaders, (udphdr *) (customHeaders + ipHdrLen));
 
     }
+    void receiveData(int vpnFd, int packetLen) {
+        struct iphdr *ipHdr = (struct iphdr *) customHeaders;
+        struct udphdr *udpHdr = (struct udphdr *) (customHeaders + 20);
 
+        ipHdr->id += htons(1);
+        ipHdr->tot_len = htons(28 + packetLen);
+        compute_ip_checksum(ipHdr);
+        memcpy((customHeaders + 28), dataReceived, packetLen);
 
-    void updateLastPkt(uint8_t* pkt) {
-        lastTime= timeNow_millis();
-        queue.push(pkt);
+        udpHdr->len = htons(packetLen + 8);
+        compute_udp_checksum(ipHdr, (unsigned short *) udpHdr);
+        write(vpnFd, customHeaders, (28 + packetLen));
     }
-
-    udphdr* getLastUdpPacket() { return LastUdpPacket; }
-    iphdr* getLastIpPacket() { return LastIpPacket; }
 
 };
 
