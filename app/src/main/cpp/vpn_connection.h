@@ -149,6 +149,13 @@ public:
         protocol = mProtocol;
     }
 
+    ~VpnConnection(){
+        while(!queue.empty()){
+            free(queue.front());
+            queue.pop();
+        }
+    }
+
     uint8_t getProtocol() { return protocol; }
     int getSocket() { return sd; }
 

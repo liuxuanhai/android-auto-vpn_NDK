@@ -95,7 +95,7 @@ void sendPackets(VpnConnection *connection, int vpnFd) {
             uint8_t* packetData = ipPacket + ipHdrLen + udpHdrLen;
             int bytesSent = send(udpSd, packetData, payloadDataLen, 0);
             __android_log_print(ANDROID_LOG_ERROR, "JNI ","UDP Sending packet %d %d %d", packetLen, ipHdrLen, udpHdrLen);
-
+            free(ipPacket);
             udpConnection->queue.pop();
 
         }
@@ -147,6 +147,7 @@ void sendPackets(VpnConnection *connection, int vpnFd) {
                     tcpConnection->receiveAck(vpnFd, TH_ACK);
                 }
             } else{
+                free(ipPacket);
                 tcpConnection->queue.pop();
             }
         }
@@ -368,7 +369,6 @@ void startSniffer(int fd) {
                         sin.sin_addr.s_addr = ipHdr->ip_dst.s_addr;
                         sin.sin_port = tcpHdr->dest;
 
-                        //TODO: wait connection with select/poll
                         int res = connect(tcpSd, (struct sockaddr *) &sin, sizeof(sin));
 
                         TcpConnection *tcpConnection = new TcpConnection(tcpKey, tcpSd, packet,
@@ -382,13 +382,6 @@ void startSniffer(int fd) {
                             perror("epoll_ctl: listen_sock");
                             exit(EXIT_FAILURE);
                         }
-                        /*if (res < 0 && errno == EINPROGRESS) {
-                            if (epoll_ctl(epollFd, EPOLL_CTL_ADD, tcpSd, &ev) == -1) {
-                                perror("epoll_ctl: listen_sock");
-                                exit(EXIT_FAILURE);
-                            }
-                        } else if (res < 0)
-                            continue;*/
 
                         __android_log_print(ANDROID_LOG_ERROR, "JNI ", "TCP Connect socket: %d %s",
                                             res, strerror(errno));
