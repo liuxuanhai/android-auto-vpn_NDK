@@ -16,14 +16,19 @@
 #include <android/log.h>
 #include <string.h>
 #include <errno.h>
+#include <time.h>
 #include "vpn_connection.h"
+
 
 bool VPN_BYTES_AVIALABLE = true;
 bool RUNNING = true;
 int epollFd;
-
+double t_cleanUp =10.0; /* required time elapsed for clean up of records*/
+struct timespec oldTime;
+struct timespec newTime;
 static std::unordered_map<std::string, UdpConnection*> udpMap;
 static std::unordered_map<std::string, TcpConnection*> tcpMap;
+static std::unordered_map<std::string, tcp_info> flowRec;
 
 JNIEnv* jniEnv;
 jobject jObject;
@@ -73,6 +78,7 @@ int getFileDescriptor(JNIEnv* env, jobject fileDescriptor) {
 void receivePackets(VpnConnection *connection, int vpnFd);
 void connectSocket(TcpConnection *connection, int vpnFd);
 void getRTT(TcpConnection *connection);
+void printRTT();
 
 void sendPackets(VpnConnection *connection, int vpnFd) {
 
@@ -162,26 +168,53 @@ void sendPackets(VpnConnection *connection, int vpnFd) {
 }
 
 void  getRTT(TcpConnection* tcpConnection){
+    /* update clock actual time each time a packet is received*/
+    clock_gettime(CLOCK_REALTIME, &newTime);
+
     int tcpSd= tcpConnection->getSocket();
     struct tcp_info ti;
     socklen_t tisize = sizeof(ti);
     getsockopt(tcpSd, IPPROTO_TCP, TCP_INFO, &ti, &tisize);
-    u_int32_t  rtt= ti.tcpi_rtt;
-
-    /* copy tcpconnection key into chararray*/
     std::string key = tcpConnection->key;
-    char *c_key = new char[key.length() + 1];
-    strcpy(c_key, key.c_str());
 
-    __android_log_print(ANDROID_LOG_ERROR, "JNI ","TCP RTT %s %d", c_key, rtt);
+    /* add connection to flowRec*/
+    if(flowRec.count(key)==0) flowRec.emplace(key,ti);
 
-    /* open a file and write results into it*/
-/*
+    /* verify if time elapsed greater than cleanup Time*/
+    if((double)(newTime.tv_sec - oldTime.tv_sec) >= t_cleanUp) printRTT();
+
+
+    /* open a file and write results into it
     FILE *fp = fopen("rtts.txt", "ab+");
     fprintf(fp,"%s:","%zu\n",c_key, rtt);
     printf("%s:","%zu\n", c_key, rtt);
     fclose(fp);*/
 }
+
+
+void printRTT(){
+
+        oldTime = newTime;
+        while (!flowRec.empty()) {
+
+            std::string key = flowRec.begin()->first;
+            tcp_info ti =flowRec.begin()->second;
+            u_int32_t  rtt= ti.tcpi_rtt;
+
+            /* copy tcpconnection key into chararray*/
+            char *c_key = new char[key.length() + 1];
+            strcpy(c_key, key.c_str());
+
+            /* print information from flowRec*/
+            __android_log_print(ANDROID_LOG_ERROR, "JNI ","TCP RTT %s %d", c_key, rtt);
+
+            /* delete current stored value for connection */
+            flowRec.erase(key);
+        }
+
+
+}
+
 void receivePackets(VpnConnection *connection, int vpnFd) {
 
     if(connection->getProtocol() == IPPROTO_UDP) {
@@ -259,6 +292,7 @@ void connectSocket(TcpConnection *tcpConnection, int vpnFd) {
 }
 
 void startSniffer(int fd) {
+    clock_gettime(CLOCK_REALTIME, &oldTime);
     epollFd = epoll_create( 0xD1E60 );
     if (epollFd < 0)
         exit(EXIT_FAILURE); // report error
