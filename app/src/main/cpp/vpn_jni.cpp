@@ -9,6 +9,7 @@
 #include <netinet/in.h>
 #include <netinet/tcp.h>
 #include <netinet/ip.h>
+#include <netinet/ip6.h>
 #include <arpa/inet.h>
 #include <unistd.h>
 #include <stdlib.h>
@@ -16,6 +17,8 @@
 #include <android/log.h>
 #include <string.h>
 #include <errno.h>
+#include <signal.h>
+#include <sys/types.h>
 #include <time.h>
 #include "vpn_connection.h"
 
@@ -79,6 +82,7 @@ void receivePackets(VpnConnection *connection, int vpnFd);
 void connectSocket(TcpConnection *connection, int vpnFd);
 void getRTT(TcpConnection *connection);
 void printRTT();
+void alarm_handler(int);
 
 void sendPackets(VpnConnection *connection, int vpnFd) {
 
@@ -181,7 +185,9 @@ void  getRTT(TcpConnection* tcpConnection){
     if(flowRec.count(key)==0) flowRec.emplace(key,ti);
 
     /* verify if time elapsed greater than cleanup Time*/
-    if((double)(newTime.tv_sec - oldTime.tv_sec) >= t_cleanUp) printRTT();
+    //disable while alarm is activated
+
+    //if((double)(newTime.tv_sec - oldTime.tv_sec) >= t_cleanUp) printRTT();
 
 
     /* open a file and write results into it
@@ -212,6 +218,26 @@ void printRTT(){
             flowRec.erase(key);
         }
 
+
+}
+
+void alarm_handler(int){
+    while (!flowRec.empty()) {
+
+        std::string key = flowRec.begin()->first;
+        tcp_info ti =flowRec.begin()->second;
+        u_int32_t  rtt= ti.tcpi_rtt;
+
+        /* copy tcpconnection key into chararray*/
+        char *c_key = new char[key.length() + 1];
+        strcpy(c_key, key.c_str());
+
+        /* print information from flowRec*/
+        __android_log_print(ANDROID_LOG_ERROR, "JNI ","TCP RTT %s %d", c_key, rtt);
+
+        /* delete current stored value for connection */
+        flowRec.erase(key);
+    }
 
 }
 
@@ -277,6 +303,7 @@ void receivePackets(VpnConnection *connection, int vpnFd) {
 
         tcpConnection->bytesReceived += packetLen;
         getRTT(tcpConnection);
+        alarm(10);
     }
 }
 
@@ -293,13 +320,28 @@ void connectSocket(TcpConnection *tcpConnection, int vpnFd) {
 
 void startSniffer(int fd) {
     clock_gettime(CLOCK_REALTIME, &oldTime);
+    /* set alarm for 10 seconds*/
+    signal(SIGALRM, alarm_handler);
+
     epollFd = epoll_create( 0xD1E60 );
     if (epollFd < 0)
         exit(EXIT_FAILURE); // report error
 
 
+    typedef struct ips{
+        union
+        {
+            struct ip * v4;
+            struct ip6_hdr * v6;
+        } type;
+
+    } ips;
+
     std::string ipSrc, ipDst;
     std::string udpKey, tcpKey;
+    struct ips ipHdr;
+    uint16_t ipHdrLen;
+    uint16_t packetLen;
 
     unsigned char packet[65536];
     int bytes_read;
@@ -313,15 +355,35 @@ void startSniffer(int fd) {
                 break;
             }
 
-            uint8_t ipVer = 4;
+            uint8_t ipVer= packet[0]>>4;
 
-            //TODO: ipv6
-            struct ip *ipHdr = (struct ip *) packet;
-            uint16_t ipHdrLen = ipHdr->ip_hl * 4;
-            uint16_t packetLen = ntohs(ipHdr->ip_len);
+            if(ipVer== 4){
+                ipHdr.type.v4 = (struct ip *) packet;
+                ipHdrLen = (ipHdr.type.v4)->ip_hl * 4;
+                packetLen = ntohs((ipHdr.type.v4)->ip_len);
+                ipSrc = inet_ntoa((ipHdr.type.v4)->ip_src);
+                ipDst = inet_ntoa((ipHdr.type.v4)->ip_dst);
+            }
 
-            ipSrc = inet_ntoa(ipHdr->ip_src);
-            ipDst = inet_ntoa(ipHdr->ip_dst);
+            if(ipVer== 6){
+                char * Src =(char *)malloc(32);
+                char * Dst= (char *)malloc(32);
+                ipHdr.type.v6 = (struct ip6_hdr*) packet;
+                ipHdrLen= 40; // ipv6 fixed header len value
+                // packet len= payload data length + ip header length
+                packetLen= ntohs((ipHdr.type.v6)->ip6_ctlun.ip6_un1.ip6_un1_plen) +ipHdrLen;
+                inet_ntop(AF_INET, (const void *) &(ipHdr.type.v6->ip6_src),
+                          Src, INET6_ADDRSTRLEN);
+                inet_ntop(AF_INET, (const void *) &(ipHdr.type.v6->ip6_dst),
+                          Dst, INET6_ADDRSTRLEN);
+                std::string d(Dst);
+                std::string s(Src);
+                ipDst= d;
+                ipSrc= s;
+                free(Src);
+                free(Dst);
+
+            }
             // if UDP
 
             if (packet[9] == IPPROTO_UDP) {
@@ -337,7 +399,9 @@ void startSniffer(int fd) {
                     protect(udpSd);
                     struct sockaddr_in sin;
                     sin.sin_family = AF_INET;
-                    sin.sin_addr.s_addr = ipHdr->ip_dst.s_addr;
+                    //ipv4
+                    sin.sin_addr.s_addr = ipHdr.type.v4->ip_dst.s_addr;
+                    //todo ipv6
                     sin.sin_port = udpHdr->uh_dport;
                     int res = connect(udpSd, (struct sockaddr *) &sin, sizeof(sin));
 
@@ -400,7 +464,9 @@ void startSniffer(int fd) {
 
                         struct sockaddr_in sin;
                         sin.sin_family = AF_INET;
-                        sin.sin_addr.s_addr = ipHdr->ip_dst.s_addr;
+                        //ipv4
+                        sin.sin_addr.s_addr = ipHdr.type.v4->ip_dst.s_addr;
+                        //todo ipv6
                         sin.sin_port = tcpHdr->dest;
 
                         int res = connect(tcpSd, (struct sockaddr *) &sin, sizeof(sin));
