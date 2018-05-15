@@ -44,6 +44,19 @@ std::string to_string(T value){
     return os.str() ;
 }
 
+
+
+typedef struct ips{
+    union
+    {
+        struct ip * v4;
+        struct ip6_hdr * v6;
+    } type;
+
+} ips;
+
+
+
 /* Simulates Android VpnService protect() function in order to protect
   raw socket from VPN connection. So, according to Android reference,
   "data sent through this socket will go directly to the underlying network,
@@ -317,7 +330,20 @@ void connectSocket(TcpConnection *tcpConnection, int vpnFd) {
         exit(EXIT_FAILURE);
     }
 }
+/* does an ipv6 hdrlen with extension fit in 16 bit value?*/
+uint16_t getIP6len(unsigned char * packet){
+    struct ips ipHdr;
+    ipHdr.type.v6 = (struct ip6_hdr *) packet;
+    u_int8_t nxt_hdr =ipHdr.type.v6->ip6_ctlun.ip6_un1.ip6_un1_nxt;
+    uint16_t hdrlen= 40;
+    while(nxt_hdr != 17 && nxt_hdr!= 6){
+        struct	ip6_ext * extension = (struct ip6_ext *) (packet + hdrlen);
+        nxt_hdr= extension->ip6e_nxt;
+        hdrlen+= extension->ip6e_len;
 
+    }
+    return hdrlen;
+}
 void startSniffer(int fd) {
     clock_gettime(CLOCK_REALTIME, &oldTime);
     /* set alarm for 10 seconds*/
@@ -326,16 +352,6 @@ void startSniffer(int fd) {
     epollFd = epoll_create( 0xD1E60 );
     if (epollFd < 0)
         exit(EXIT_FAILURE); // report error
-
-
-    typedef struct ips{
-        union
-        {
-            struct ip * v4;
-            struct ip6_hdr * v6;
-        } type;
-
-    } ips;
 
     std::string ipSrc, ipDst;
     std::string udpKey, tcpKey;
@@ -366,12 +382,14 @@ void startSniffer(int fd) {
             }
 
             if(ipVer== 6){
-                char * Src =(char *)malloc(32);
-                char * Dst= (char *)malloc(32);
+                char * Src =(char *)malloc(16);//or 32??
+                char * Dst= (char *)malloc(16);
                 ipHdr.type.v6 = (struct ip6_hdr*) packet;
-                ipHdrLen= 40; // ipv6 fixed header len value
+                uint16_t fixed_hdrlen= 40;
+                ipHdrLen= getIP6len(packet); // ipv6 fixed header len value
+
                 // packet len= payload data length + ip header length
-                packetLen= ntohs((ipHdr.type.v6)->ip6_ctlun.ip6_un1.ip6_un1_plen) +ipHdrLen;
+                packetLen= ntohs((ipHdr.type.v6)->ip6_ctlun.ip6_un1.ip6_un1_plen) + fixed_hdrlen;
                 inet_ntop(AF_INET, (const void *) &(ipHdr.type.v6->ip6_src),
                           Src, INET6_ADDRSTRLEN);
                 inet_ntop(AF_INET, (const void *) &(ipHdr.type.v6->ip6_dst),
@@ -395,15 +413,30 @@ void startSniffer(int fd) {
                 std::string udpKey = ipSrc + "+" + ipDst;
 
                 if (udpMap.count(udpKey) == 0) {
-                    int udpSd = socket(AF_INET, SOCK_DGRAM | SOCK_NONBLOCK, IPPROTO_UDP);
-                    protect(udpSd);
                     struct sockaddr_in sin;
-                    sin.sin_family = AF_INET;
-                    //ipv4
-                    sin.sin_addr.s_addr = ipHdr.type.v4->ip_dst.s_addr;
-                    //todo ipv6
-                    sin.sin_port = udpHdr->uh_dport;
-                    int res = connect(udpSd, (struct sockaddr *) &sin, sizeof(sin));
+                    //struct sockaddr_in6 sin6;
+                    int udpSd;
+                    int res;
+                    if(ipVer==4) {
+                        udpSd = socket(AF_INET, SOCK_DGRAM | SOCK_NONBLOCK, IPPROTO_UDP);
+                        protect(udpSd);
+                        sin.sin_family = AF_INET;
+                        sin.sin_addr.s_addr = ipHdr.type.v4->ip_dst.s_addr;
+                        sin.sin_port = udpHdr->uh_dport;
+                        res = connect(udpSd, (struct sockaddr *) &sin, sizeof(sin));
+                    }
+
+                    if(ipVer==6){
+                      /*  udpSd= socket(AF_INET6, SOCK_DGRAM | SOCK_NONBLOCK, IPPROTO_UDP);
+                        protect(udpSd);
+                        sin6.sin6_len = sizeof(sin6);
+                        sin6.sin6_family = AF_INET6;
+                        sin6.sin6_addr.s6_addr = ipHdr.type.v6->ip6_dst.s6_addr;
+                        sin6.sin6_port= udpHdr->uh_dport;
+                        res = connect(udpSd, (struct sockaddr *) &sin6, sizeof(sin6));
+                    */
+                    }
+
 
                     __android_log_print(ANDROID_LOG_ERROR, "JNI ", "UDP Connect socket for: %s %d",
                                         ipDst.c_str(), res);
