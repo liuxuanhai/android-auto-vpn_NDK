@@ -168,6 +168,7 @@ public:
     uint32_t currAck;
     uint32_t currSeq;
     uint32_t lastAckSent;
+    std:: string ipDest;
 
     int bytesReceived;
     uint32_t baseSeq;
@@ -191,9 +192,10 @@ public:
         tcpHdr->th_off = 5;
     }
 
-    TcpConnection(std::string mKey, int mSd, uint8_t *packet,
+    TcpConnection(std::string mKey, std:: string dKey, int mSd, uint8_t *packet,
                   bool newKey, uint16_t ipHdrLen, uint16_t tcpHdrLen, uint16_t payloadDataLen) : VpnConnection(mKey, mSd, IPPROTO_TCP){
         key = mKey;
+        ipDest= dKey;
         sd = mSd;
         struct tcphdr* tcpHdr = (struct tcphdr*) (packet + ipHdrLen);
         memcpy(customHeaders, packet, ipHdrLen + tcpHdrLen);
@@ -229,7 +231,7 @@ public:
         buffer[80] = 0;
         for(int j = 0; j < 40; j++)
             sprintf(&buffer[2*j], "%02X", customHeaders[j]);
-        __android_log_print(ANDROID_LOG_ERROR, "JNI ","TCP receive: %s %d\n", buffer, controlFlags & 0xff);
+        //__android_log_print(ANDROID_LOG_ERROR, "JNI ","TCP receive: %s %d\n", buffer, controlFlags & 0xff);
 
         write(vpnFd, customHeaders, 40);
     }
@@ -253,7 +255,7 @@ public:
         for(int j = 0; j < (40 + packetLen); j++)
             sprintf(&buffer[2*j], "%02X\n", customHeaders[j]);
 
-        __android_log_print(ANDROID_LOG_ERROR, "JNI ","TCP receiveData: %s\n", buffer);
+        //__android_log_print(ANDROID_LOG_ERROR, "JNI ","TCP receiveData: %s\n", buffer);
 
         write(vpnFd, customHeaders, (40 + packetLen));
     }

@@ -1,5 +1,6 @@
 #include <string>
 #include <unordered_map>
+#include <list>
 #include <sstream>
 #include <jni.h>
 #include <stdio.h>
@@ -31,7 +32,7 @@ struct timespec oldTime;
 struct timespec newTime;
 static std::unordered_map<std::string, UdpConnection*> udpMap;
 static std::unordered_map<std::string, TcpConnection*> tcpMap;
-static std::unordered_map<std::string, tcp_info> flowRec;
+static std::unordered_map<std::string, std::list<tcp_info> > flowRec;
 
 JNIEnv* jniEnv;
 jobject jObject;
@@ -64,7 +65,7 @@ typedef struct ips{
 int protect(int sd){
     jboolean res = jniEnv->CallBooleanMethod(jObject, protectMethod, sd);
     if(res){
-        __android_log_print(ANDROID_LOG_ERROR, "JNI ","protected socket: %d", sd);
+        //__android_log_print(ANDROID_LOG_ERROR, "JNI ","protected socket: %d", sd);
         return 1;
     }
     return 0;
@@ -89,8 +90,6 @@ int getFileDescriptor(JNIEnv* env, jobject fileDescriptor) {
 
 
 
-
-
 void receivePackets(VpnConnection *connection, int vpnFd);
 void connectSocket(TcpConnection *connection, int vpnFd);
 void getRTT(TcpConnection *connection);
@@ -110,14 +109,14 @@ void sendPackets(VpnConnection *connection, int vpnFd) {
             //mandar solo datagram info
             uint8_t* ipPacket = udpConnection->queue.front();
             struct ip *ipHdr= (struct ip*) ipPacket;
-            int ipHdrLen = ipHdr->ip_hl * 4;
-            int packetLen = ntohs(ipHdr->ip_len);
-            int udpHdrLen = 8;
+            uint16_t ipHdrLen = ipHdr->ip_hl * 4;
+            uint16_t packetLen = ntohs(ipHdr->ip_len);
+            uint16_t udpHdrLen = 8;
 
-            int payloadDataLen = packetLen - ipHdrLen - udpHdrLen;
+            uint16_t payloadDataLen = packetLen - ipHdrLen - udpHdrLen;
             uint8_t* packetData = ipPacket + ipHdrLen + udpHdrLen;
             int bytesSent = send(udpSd, packetData, payloadDataLen, 0);
-            __android_log_print(ANDROID_LOG_ERROR, "JNI ","UDP Sending packet %d %d %d", packetLen, ipHdrLen, udpHdrLen);
+            __android_log_print(ANDROID_LOG_ERROR, "JNI ","UDP Sending packet %u %u %u", packetLen, ipHdrLen, udpHdrLen);
             free(ipPacket);
             udpConnection->queue.pop();
 
@@ -150,7 +149,7 @@ void sendPackets(VpnConnection *connection, int vpnFd) {
             uint16_t tcpHdrLen = tcpHdr->doff * 4;
             uint16_t payloadDataLen = packetLen - ipHdrLen - tcpHdrLen;
 
-            __android_log_print(ANDROID_LOG_ERROR, "JNI ","TCP Sending packet %d %d %d", packetLen, ipHdrLen, tcpHdrLen);
+            //__android_log_print(ANDROID_LOG_ERROR, "JNI ","TCP Sending packet %d %d %d", packetLen, ipHdrLen, tcpHdrLen);
 
 
             if(ntohl(tcpHdr->seq) >= tcpConnection->currAck) {
@@ -192,11 +191,20 @@ void  getRTT(TcpConnection* tcpConnection){
     struct tcp_info ti;
     socklen_t tisize = sizeof(ti);
     getsockopt(tcpSd, IPPROTO_TCP, TCP_INFO, &ti, &tisize);
-    std::string key = tcpConnection->key;
-
+    std::string key = tcpConnection->ipDest;
+    __android_log_print(ANDROID_LOG_ERROR, "JNI ","TCP RTT %lu %u", (unsigned long) ti.tcpi_min_rtt, ti.tcpi_rtt);
     /* add connection to flowRec*/
-    if(flowRec.count(key)==0) flowRec.emplace(key,ti);
+    if(flowRec.count(key)==0) {
+        std::list <tcp_info> tcpinfos;
+        tcpinfos.push_front(ti);
+        flowRec.emplace(key,tcpinfos);
+    }
 
+    else
+    {
+        auto item= flowRec.find(key);
+        item->second.push_front(ti);
+    }
     /* verify if time elapsed greater than cleanup Time*/
     //disable while alarm is activated
 
@@ -217,15 +225,21 @@ void printRTT(){
         while (!flowRec.empty()) {
 
             std::string key = flowRec.begin()->first;
-            tcp_info ti =flowRec.begin()->second;
-            u_int32_t  rtt= ti.tcpi_rtt;
+            std::list<tcp_info> tcpinfos =flowRec.begin()->second;
+            tcp_info ti= tcpinfos.front();
+            u_int32_t minRtt= ti.tcpi_min_rtt;
+            while(tcpinfos.size()!=0){
+                tcp_info ti= tcpinfos.front();
+                if( ti.tcpi_min_rtt< minRtt) minRtt= ti.tcpi_min_rtt;
+                tcpinfos.pop_front();
+            }
 
             /* copy tcpconnection key into chararray*/
             char *c_key = new char[key.length() + 1];
             strcpy(c_key, key.c_str());
 
             /* print information from flowRec*/
-            __android_log_print(ANDROID_LOG_ERROR, "JNI ","TCP RTT %s %d", c_key, rtt);
+            __android_log_print(ANDROID_LOG_ERROR, "JNI ","TCP RTT %s %u", c_key, minRtt);
 
             /* delete current stored value for connection */
             flowRec.erase(key);
@@ -238,19 +252,27 @@ void alarm_handler(int){
     while (!flowRec.empty()) {
 
         std::string key = flowRec.begin()->first;
-        tcp_info ti =flowRec.begin()->second;
-        u_int32_t  rtt= ti.tcpi_rtt;
+        std::list<tcp_info> tcpinfos =flowRec.begin()->second;
+        tcp_info ti= tcpinfos.front();
+        u_int32_t minRtt= ti.tcpi_min_rtt;
+        while(tcpinfos.size()!=0){
+            tcp_info ti= tcpinfos.front();
+            if( ti.tcpi_min_rtt< minRtt) minRtt= ti.tcpi_min_rtt;
+            tcpinfos.pop_front();
+        }
 
         /* copy tcpconnection key into chararray*/
         char *c_key = new char[key.length() + 1];
         strcpy(c_key, key.c_str());
 
         /* print information from flowRec*/
-        __android_log_print(ANDROID_LOG_ERROR, "JNI ","TCP RTT %s %d", c_key, rtt);
+        __android_log_print(ANDROID_LOG_ERROR, "JNI ","TCP RTT %s %u", c_key, minRtt);
 
         /* delete current stored value for connection */
         flowRec.erase(key);
+
     }
+    alarm(10);
 
 }
 
@@ -261,10 +283,11 @@ void receivePackets(VpnConnection *connection, int vpnFd) {
         int udpSd = udpConnection->getSocket();
         int bytes_read= recv(udpSd, udpConnection->dataReceived, IP_MAXPACKET - 28, 0);
         if (bytes_read <= 0) {
-            __android_log_print(ANDROID_LOG_ERROR, "JNI ","bytes read %d", bytes_read);
+            //__android_log_print(ANDROID_LOG_ERROR, "JNI ","bytes read %d", bytes_read);
             return;
         }
         __android_log_print(ANDROID_LOG_ERROR, "JNI ","UDP read %d", bytes_read);
+
         udpConnection->receiveData(vpnFd, bytes_read);
     }
     if(connection->getProtocol() == IPPROTO_TCP){
@@ -275,10 +298,10 @@ void receivePackets(VpnConnection *connection, int vpnFd) {
         int bytesSinceLastAck = tcpConnection->bytesReceived - tcpConnection->bytesAcked();
         int packetLen = -1;
 
-        __android_log_print(ANDROID_LOG_ERROR, "JNI ","TCP read %d", bytesSinceLastAck);
+        //__android_log_print(ANDROID_LOG_ERROR, "JNI ","TCP read %d", bytesSinceLastAck);
 
         if (tcpConnection->getAdjustedCurrPeerWindowSize() != 0) {
-            __android_log_print(ANDROID_LOG_ERROR, "JNI ","TCP read %d", tcpConnection->getAdjustedCurrPeerWindowSize());
+            //__android_log_print(ANDROID_LOG_ERROR, "JNI ","TCP read %d", tcpConnection->getAdjustedCurrPeerWindowSize());
 
             if (bytesSinceLastAck >= tcpConnection->getAdjustedCurrPeerWindowSize())
                 return;
@@ -300,10 +323,10 @@ void receivePackets(VpnConnection *connection, int vpnFd) {
 
         if (packetLen < 0)
             return;
-        __android_log_print(ANDROID_LOG_ERROR, "JNI ","TCP read %d", packetLen);
+        //__android_log_print(ANDROID_LOG_ERROR, "JNI ","TCP read %d", packetLen);
 
         int remainingBytes = tcpConnection->getAdjustedCurrPeerWindowSize() - bytesSinceLastAck;
-        __android_log_print(ANDROID_LOG_ERROR, "JNI ","TCP read %d", remainingBytes);
+        //__android_log_print(ANDROID_LOG_ERROR, "JNI ","TCP read %d", remainingBytes);
 
         if (packetLen > remainingBytes){
             packetLen = remainingBytes;
@@ -316,7 +339,7 @@ void receivePackets(VpnConnection *connection, int vpnFd) {
 
         tcpConnection->bytesReceived += packetLen;
         getRTT(tcpConnection);
-        alarm(10);
+
     }
 }
 
@@ -348,6 +371,7 @@ void startSniffer(int fd) {
     clock_gettime(CLOCK_REALTIME, &oldTime);
     /* set alarm for 10 seconds*/
     signal(SIGALRM, alarm_handler);
+    alarm(10);
 
     epollFd = epoll_create( 0xD1E60 );
     if (epollFd < 0)
@@ -407,7 +431,7 @@ void startSniffer(int fd) {
             if (packet[9] == IPPROTO_UDP) {
 
                 struct udphdr *udpHdr = (struct udphdr *) (packet + ipHdrLen);
-                int udpHdrLen = udpHdr->uh_ulen * 4;
+                uint16_t udpHdrLen = udpHdr->uh_ulen * 4;
                 ipSrc = ipSrc + ":" + to_string(ntohs(udpHdr->uh_sport));
                 ipDst = ipDst + ":" + to_string(ntohs(udpHdr->uh_dport));
                 std::string udpKey = ipSrc + "+" + ipDst;
@@ -438,8 +462,8 @@ void startSniffer(int fd) {
                     }
 
 
-                    __android_log_print(ANDROID_LOG_ERROR, "JNI ", "UDP Connect socket for: %s %d",
-                                        ipDst.c_str(), res);
+                   // __android_log_print(ANDROID_LOG_ERROR, "JNI ", "UDP Connect socket for: %s %d",
+                                        //ipDst.c_str(), res);
                     UdpConnection *udpConnection = new UdpConnection(udpKey, udpSd, packet, ipHdrLen, udpHdrLen);
                     udpMap.insert(std::make_pair(udpKey, udpConnection));
                     udpConnection->ev.events = EPOLLIN;
@@ -468,7 +492,7 @@ void startSniffer(int fd) {
             else if (packet[9] == IPPROTO_TCP) {
 
                 struct tcphdr *tcpHdr = (struct tcphdr *) (packet + ipHdrLen);
-                int tcpHdrLen = tcpHdr->doff * 4;
+                uint16_t tcpHdrLen = tcpHdr->doff * 4;
                 uint16_t payloadDataLen = packetLen - ipHdrLen - tcpHdrLen;
 
 
@@ -486,14 +510,14 @@ void startSniffer(int fd) {
                 std::string tcpKey = ipSrc + "+" + ipDst;
 
                 if (tcpMap.count(tcpKey) == 0) {
-                    __android_log_print(ANDROID_LOG_ERROR, "JNI ", "TCP Not found key: %s %x",
-                                        tcpKey.c_str(), tcpHdr->th_flags & 0xff);
+                    //__android_log_print(ANDROID_LOG_ERROR, "JNI ", "TCP Not found key: %s %x",
+                                        //tcpKey.c_str(), tcpHdr->th_flags & 0xff);
 
                     if (tcpHdr->syn && !tcpHdr->ack) {
 
                         int tcpSd = socket(AF_INET, SOCK_STREAM | SOCK_NONBLOCK, 0);
                         protect(tcpSd);
-                        __android_log_print(ANDROID_LOG_ERROR, "JNI ", "TCP Creating socket ");
+                        //__android_log_print(ANDROID_LOG_ERROR, "JNI ", "TCP Creating socket ");
 
                         struct sockaddr_in sin;
                         sin.sin_family = AF_INET;
@@ -504,7 +528,7 @@ void startSniffer(int fd) {
 
                         int res = connect(tcpSd, (struct sockaddr *) &sin, sizeof(sin));
 
-                        TcpConnection *tcpConnection = new TcpConnection(tcpKey, tcpSd, packet,
+                        TcpConnection *tcpConnection = new TcpConnection(tcpKey,ipDst, tcpSd, packet,
                                                                          true, ipHdrLen, tcpHdrLen,
                                                                          payloadDataLen);
 
@@ -516,15 +540,15 @@ void startSniffer(int fd) {
                             exit(EXIT_FAILURE);
                         }
 
-                        __android_log_print(ANDROID_LOG_ERROR, "JNI ", "TCP Connect socket: %d %s",
-                                            res, strerror(errno));
-                        __android_log_print(ANDROID_LOG_ERROR, "JNI ", "TCP Connect socket: %d %x",
-                                            tcpSd, tcpConnection);
+                        //__android_log_print(ANDROID_LOG_ERROR, "JNI ", "TCP Connect socket: %d %s",
+                                            //res, strerror(errno));
+                        //__android_log_print(ANDROID_LOG_ERROR, "JNI ", "TCP Connect socket: %d %x",
+                                            //tcpSd, tcpConnection);
 
                         tcpMap.insert(std::make_pair(tcpKey, tcpConnection));
 
                     } else if (tcpHdr->fin || tcpHdr->ack) {
-                        TcpConnection tcpConnection(tcpKey, NULL, packet, false, ipHdrLen,
+                        TcpConnection tcpConnection(tcpKey,ipDst, NULL, packet, false, ipHdrLen,
                                                     tcpHdrLen, payloadDataLen);
                         tcpConnection.currAck++;
                         tcpConnection.receiveAck(fd, TH_RST);
@@ -535,8 +559,8 @@ void startSniffer(int fd) {
                     int tcpSd = tcpConnection->getSocket();
 
                     if (tcpHdr->fin) {
-                        __android_log_print(ANDROID_LOG_ERROR, "JNI ", "TCP FIN Packet to: %s %d",
-                                            ipDst.c_str(), payloadDataLen);
+                        //__android_log_print(ANDROID_LOG_ERROR, "JNI ", "TCP FIN Packet to: %s %d",
+                        //                    ipDst.c_str(), payloadDataLen);
 
                         tcpConnection->updateLastPacket(tcpHdr, payloadDataLen);
 
@@ -547,8 +571,8 @@ void startSniffer(int fd) {
                         delete tcpConnection;
                         tcpMap.erase(tcpKey);
                     } else if (tcpHdr->rst) {
-                        __android_log_print(ANDROID_LOG_ERROR, "JNI ", "TCP RST Packet to: %s %d",
-                                            ipDst.c_str(), payloadDataLen);
+                        //__android_log_print(ANDROID_LOG_ERROR, "JNI ", "TCP RST Packet to: %s %d",
+                        //                    ipDst.c_str(), payloadDataLen);
 
                         tcpConnection->receiveAck(fd, TH_RST);
                         close(tcpSd);
@@ -556,8 +580,8 @@ void startSniffer(int fd) {
                         delete tcpConnection;
                         tcpMap.erase(tcpKey);
                     } else if (!tcpHdr->syn && tcpHdr->ack) {
-                        __android_log_print(ANDROID_LOG_ERROR, "JNI ", "TCP ACK Packet to: %s %d",
-                                            ipDst.c_str(), payloadDataLen);
+                        //__android_log_print(ANDROID_LOG_ERROR, "JNI ", "TCP ACK Packet to: %s %d",
+                        //                    ipDst.c_str(), payloadDataLen);
 
                         if (payloadDataLen > 0) {
                             uint8_t *newPacket = (uint8_t *) malloc(packetLen);
@@ -578,11 +602,11 @@ void startSniffer(int fd) {
         struct epoll_event events[20];
         int n = epoll_wait(epollFd, events, 20, 0);
         if(n>0)
-            __android_log_print(ANDROID_LOG_ERROR, "JNI ", "EPOLL N: %d", n);
+            //__android_log_print(ANDROID_LOG_ERROR, "JNI ", "EPOLL N: %d", n);
 
         for (int i = 0; i < n; i++) {
             struct epoll_event ev = events[i];
-            __android_log_print(ANDROID_LOG_ERROR, "JNI ", "EPOLL fd: %d %x", ((VpnConnection*)ev.data.ptr)->getSocket(),((VpnConnection*)ev.events) );
+            //__android_log_print(ANDROID_LOG_ERROR, "JNI ", "EPOLL fd: %d %x", ((VpnConnection*)ev.data.ptr)->getSocket(),((VpnConnection*)ev.events) );
 
             if (ev.events & EPOLLOUT)
                 sendPackets((VpnConnection *) ev.data.ptr, fd);
