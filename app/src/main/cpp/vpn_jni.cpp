@@ -37,7 +37,7 @@ static std::unordered_map<std::string, std::list<tcp_info> > flowRec;
 JNIEnv* jniEnv;
 jobject jObject;
 jmethodID protectMethod;
-
+FILE *rttFile;
 template <typename T>
 std::string to_string(T value){
     std::ostringstream os ;
@@ -186,20 +186,20 @@ void sendPackets(VpnConnection *connection, int vpnFd) {
 void  getRTT(TcpConnection* tcpConnection){
     /* update clock actual time each time a packet is received*/
     clock_gettime(CLOCK_REALTIME, &newTime);
-
     int tcpSd= tcpConnection->getSocket();
     struct tcp_info ti;
     socklen_t tisize = sizeof(ti);
+    //__android_log_print(ANDROID_LOG_ERROR, "JNI ","TCP RTT1 %u %u", (unsigned long) ti.tcpi_rtt, ti.tcpi_min_rtt);
+
     getsockopt(tcpSd, IPPROTO_TCP, TCP_INFO, &ti, &tisize);
     std::string key = tcpConnection->ipDest;
-    __android_log_print(ANDROID_LOG_ERROR, "JNI ","TCP RTT %lu %u", (unsigned long) ti.tcpi_min_rtt, ti.tcpi_rtt);
+    //__android_log_print(ANDROID_LOG_ERROR, "JNI ","TCP RTT2 %u %u", (unsigned long) ti.tcpi_rtt, ti.tcpi_min_rtt);
     /* add connection to flowRec*/
     if(flowRec.count(key)==0) {
         std::list <tcp_info> tcpinfos;
         tcpinfos.push_front(ti);
         flowRec.emplace(key,tcpinfos);
     }
-
     else
     {
         auto item= flowRec.find(key);
@@ -218,46 +218,16 @@ void  getRTT(TcpConnection* tcpConnection){
     fclose(fp);*/
 }
 
-
-void printRTT(){
-
-        oldTime = newTime;
-        while (!flowRec.empty()) {
-
-            std::string key = flowRec.begin()->first;
-            std::list<tcp_info> tcpinfos =flowRec.begin()->second;
-            tcp_info ti= tcpinfos.front();
-            u_int32_t minRtt= ti.tcpi_min_rtt;
-            while(tcpinfos.size()!=0){
-                tcp_info ti= tcpinfos.front();
-                if( ti.tcpi_min_rtt< minRtt) minRtt= ti.tcpi_min_rtt;
-                tcpinfos.pop_front();
-            }
-
-            /* copy tcpconnection key into chararray*/
-            char *c_key = new char[key.length() + 1];
-            strcpy(c_key, key.c_str());
-
-            /* print information from flowRec*/
-            __android_log_print(ANDROID_LOG_ERROR, "JNI ","TCP RTT %s %u", c_key, minRtt);
-
-            /* delete current stored value for connection */
-            flowRec.erase(key);
-        }
-
-
-}
-
 void alarm_handler(int){
     while (!flowRec.empty()) {
 
         std::string key = flowRec.begin()->first;
         std::list<tcp_info> tcpinfos =flowRec.begin()->second;
         tcp_info ti= tcpinfos.front();
-        u_int32_t minRtt= ti.tcpi_min_rtt;
+        u_int32_t minRtt= ti.tcpi_rtt;
         while(tcpinfos.size()!=0){
             tcp_info ti= tcpinfos.front();
-            if( ti.tcpi_min_rtt< minRtt) minRtt= ti.tcpi_min_rtt;
+            if( ti.tcpi_rtt< minRtt) minRtt= ti.tcpi_rtt;
             tcpinfos.pop_front();
         }
 
@@ -265,13 +235,19 @@ void alarm_handler(int){
         char *c_key = new char[key.length() + 1];
         strcpy(c_key, key.c_str());
 
+        time_t rawtime;
+        time(&rawtime);
         /* print information from flowRec*/
-        __android_log_print(ANDROID_LOG_ERROR, "JNI ","TCP RTT %s %u", c_key, minRtt);
+        int rc = fprintf(rttFile, "%s,%u,%d\n", c_key, minRtt, rawtime);
+        __android_log_print(ANDROID_LOG_ERROR, "JNI ","TCP RTT alarm %s %u %d", c_key, minRtt, rawtime);
+        if (rc<0)
+            __android_log_print(ANDROID_LOG_ERROR, "JNI ","TCP RTT alarm %s %d", strerror(errno), rc);
 
         /* delete current stored value for connection */
         flowRec.erase(key);
 
     }
+    fflush(rttFile);
     alarm(10);
 
 }
@@ -368,6 +344,7 @@ uint16_t getIP6len(unsigned char * packet){
     return hdrlen;
 }
 void startSniffer(int fd) {
+    rttFile = fopen("/storage/emulated/0/rtt.txt", "r+");
     clock_gettime(CLOCK_REALTIME, &oldTime);
     /* set alarm for 10 seconds*/
     signal(SIGALRM, alarm_handler);
@@ -451,19 +428,19 @@ void startSniffer(int fd) {
                     }
 
                     if(ipVer==6){
-                      /*  udpSd= socket(AF_INET6, SOCK_DGRAM | SOCK_NONBLOCK, IPPROTO_UDP);
-                        protect(udpSd);
-                        sin6.sin6_len = sizeof(sin6);
-                        sin6.sin6_family = AF_INET6;
-                        sin6.sin6_addr.s6_addr = ipHdr.type.v6->ip6_dst.s6_addr;
-                        sin6.sin6_port= udpHdr->uh_dport;
-                        res = connect(udpSd, (struct sockaddr *) &sin6, sizeof(sin6));
-                    */
+                        /*  udpSd= socket(AF_INET6, SOCK_DGRAM | SOCK_NONBLOCK, IPPROTO_UDP);
+                          protect(udpSd);
+                          sin6.sin6_len = sizeof(sin6);
+                          sin6.sin6_family = AF_INET6;
+                          sin6.sin6_addr.s6_addr = ipHdr.type.v6->ip6_dst.s6_addr;
+                          sin6.sin6_port= udpHdr->uh_dport;
+                          res = connect(udpSd, (struct sockaddr *) &sin6, sizeof(sin6));
+                      */
                     }
 
 
-                   // __android_log_print(ANDROID_LOG_ERROR, "JNI ", "UDP Connect socket for: %s %d",
-                                        //ipDst.c_str(), res);
+                    // __android_log_print(ANDROID_LOG_ERROR, "JNI ", "UDP Connect socket for: %s %d",
+                    //ipDst.c_str(), res);
                     UdpConnection *udpConnection = new UdpConnection(udpKey, udpSd, packet, ipHdrLen, udpHdrLen);
                     udpMap.insert(std::make_pair(udpKey, udpConnection));
                     udpConnection->ev.events = EPOLLIN;
@@ -479,7 +456,7 @@ void startSniffer(int fd) {
                         exit(EXIT_FAILURE);
                     }
                     sendPackets(udpConnection, fd);
-                    }
+                }
                 else {
                     UdpConnection *udpConnection = udpMap.at(udpKey);
                     uint8_t *newPacket = (uint8_t *) malloc(packetLen);
@@ -511,7 +488,7 @@ void startSniffer(int fd) {
 
                 if (tcpMap.count(tcpKey) == 0) {
                     //__android_log_print(ANDROID_LOG_ERROR, "JNI ", "TCP Not found key: %s %x",
-                                        //tcpKey.c_str(), tcpHdr->th_flags & 0xff);
+                    //tcpKey.c_str(), tcpHdr->th_flags & 0xff);
 
                     if (tcpHdr->syn && !tcpHdr->ack) {
 
@@ -541,9 +518,9 @@ void startSniffer(int fd) {
                         }
 
                         //__android_log_print(ANDROID_LOG_ERROR, "JNI ", "TCP Connect socket: %d %s",
-                                            //res, strerror(errno));
+                        //res, strerror(errno));
                         //__android_log_print(ANDROID_LOG_ERROR, "JNI ", "TCP Connect socket: %d %x",
-                                            //tcpSd, tcpConnection);
+                        //tcpSd, tcpConnection);
 
                         tcpMap.insert(std::make_pair(tcpKey, tcpConnection));
 
@@ -604,15 +581,15 @@ void startSniffer(int fd) {
         if(n>0)
             //__android_log_print(ANDROID_LOG_ERROR, "JNI ", "EPOLL N: %d", n);
 
-        for (int i = 0; i < n; i++) {
-            struct epoll_event ev = events[i];
-            //__android_log_print(ANDROID_LOG_ERROR, "JNI ", "EPOLL fd: %d %x", ((VpnConnection*)ev.data.ptr)->getSocket(),((VpnConnection*)ev.events) );
+            for (int i = 0; i < n; i++) {
+                struct epoll_event ev = events[i];
+                //__android_log_print(ANDROID_LOG_ERROR, "JNI ", "EPOLL fd: %d %x", ((VpnConnection*)ev.data.ptr)->getSocket(),((VpnConnection*)ev.events) );
 
-            if (ev.events & EPOLLOUT)
-                sendPackets((VpnConnection *) ev.data.ptr, fd);
-            if (ev.events & EPOLLIN)
-                receivePackets((VpnConnection *) ev.data.ptr, fd);
-        }
+                if (ev.events & EPOLLOUT)
+                    sendPackets((VpnConnection *) ev.data.ptr, fd);
+                if (ev.events & EPOLLIN)
+                    receivePackets((VpnConnection *) ev.data.ptr, fd);
+            }
     }
 }
 
