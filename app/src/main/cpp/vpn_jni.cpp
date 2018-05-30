@@ -4,6 +4,8 @@
 #include <sstream>
 #include <jni.h>
 #include <stdio.h>
+#include <linux/libc-compat.h>
+
 #include <sys/socket.h>
 #include <sys/stat.h>
 #include <sys/epoll.h>
@@ -12,6 +14,7 @@
 #include <netinet/ip.h>
 #include <netinet/ip6.h>
 #include <arpa/inet.h>
+#include <linux/in6.h>
 #include <unistd.h>
 #include <stdlib.h>
 #include <fcntl.h>
@@ -28,8 +31,6 @@ bool VPN_BYTES_AVIALABLE = true;
 bool RUNNING = true;
 int epollFd;
 double t_cleanUp =10.0; /* required time elapsed for clean up of records*/
-struct timespec oldTime;
-struct timespec newTime;
 static std::unordered_map<std::string, UdpConnection*> udpMap;
 static std::unordered_map<std::string, TcpConnection*> tcpMap;
 static std::unordered_map<std::string, std::list<tcp_info> > flowRec;
@@ -93,11 +94,37 @@ int getFileDescriptor(JNIEnv* env, jobject fileDescriptor) {
 void receivePackets(VpnConnection *connection, int vpnFd);
 void connectSocket(TcpConnection *connection, int vpnFd);
 void getRTT(TcpConnection *connection);
-void printRTT();
 void alarm_handler(int);
+uint16_t getIP6len(unsigned char * packet);
+
+void assignIpVersion(struct ips ipHdr, uint8_t * ipPacket, uint16_t * ipHdrLen, uint16_t * packetLen)
+{
+    uint8_t ipVer= ipPacket[0]>>4;
+    if(ipVer== 4)
+    {
+        ipHdr.type.v4 = (struct ip *) ipPacket;
+        (*ipHdrLen) = (ipHdr.type.v4)->ip_hl * 4;
+        (*packetLen) = ntohs((ipHdr.type.v4)->ip_len);
+    }
+    if(ipVer==6)
+    {
+        ipHdr.type.v6= (struct ip6_hdr*) ipPacket;
+        uint16_t fixed_hdrlen= 40;
+        (*ipHdrLen)= getIP6len(ipPacket); // ipv6 fixed header len value
+        // packet len= payload data length + ip header length
+        // Payload Length (16 bits) The size of the payload in octets, including any extension headers
+        (*packetLen)= ntohs((ipHdr.type.v6)->ip6_ctlun.ip6_un1.ip6_un1_plen) + fixed_hdrlen;
+    }
+
+
+}
+
 
 void sendPackets(VpnConnection *connection, int vpnFd) {
-
+    struct ips ipHdr;
+    uint16_t ipHdrLen;
+    uint16_t packetLen;
+    uint16_t udpHdrLen= 8;
 
     if(connection->getProtocol() == IPPROTO_UDP) {
 
@@ -108,10 +135,8 @@ void sendPackets(VpnConnection *connection, int vpnFd) {
 
             //mandar solo datagram info
             uint8_t* ipPacket = udpConnection->queue.front();
-            struct ip *ipHdr= (struct ip*) ipPacket;
-            uint16_t ipHdrLen = ipHdr->ip_hl * 4;
-            uint16_t packetLen = ntohs(ipHdr->ip_len);
-            uint16_t udpHdrLen = 8;
+
+            assignIpVersion(ipHdr, ipPacket, &ipHdrLen, &packetLen);
 
             uint16_t payloadDataLen = packetLen - ipHdrLen - udpHdrLen;
             uint8_t* packetData = ipPacket + ipHdrLen + udpHdrLen;
@@ -139,17 +164,12 @@ void sendPackets(VpnConnection *connection, int vpnFd) {
 
             uint8_t* ipPacket = tcpConnection->queue.front();
 
-            //TODO: ipv6
-            struct ip *ipHdr= (struct ip*) ipPacket;
-            uint16_t ipHdrLen = ipHdr->ip_hl * 4;
-            uint16_t packetLen = ntohs(ipHdr->ip_len);
+            assignIpVersion(ipHdr, ipPacket, &ipHdrLen, &packetLen);
 
             tcphdr* tcpHdr = (tcphdr*) (ipPacket + ipHdrLen);
 
             uint16_t tcpHdrLen = tcpHdr->doff * 4;
             uint16_t payloadDataLen = packetLen - ipHdrLen - tcpHdrLen;
-
-            //__android_log_print(ANDROID_LOG_ERROR, "JNI ","TCP Sending packet %d %d %d", packetLen, ipHdrLen, tcpHdrLen);
 
 
             if(ntohl(tcpHdr->seq) >= tcpConnection->currAck) {
@@ -184,8 +204,6 @@ void sendPackets(VpnConnection *connection, int vpnFd) {
 }
 
 void  getRTT(TcpConnection* tcpConnection){
-    /* update clock actual time each time a packet is received*/
-    clock_gettime(CLOCK_REALTIME, &newTime);
     int tcpSd= tcpConnection->getSocket();
     struct tcp_info ti;
     socklen_t tisize = sizeof(ti);
@@ -205,11 +223,6 @@ void  getRTT(TcpConnection* tcpConnection){
         auto item= flowRec.find(key);
         item->second.push_front(ti);
     }
-    /* verify if time elapsed greater than cleanup Time*/
-    //disable while alarm is activated
-
-    //if((double)(newTime.tv_sec - oldTime.tv_sec) >= t_cleanUp) printRTT();
-
 
     /* open a file and write results into it
     FILE *fp = fopen("rtts.txt", "ab+");
@@ -345,7 +358,6 @@ uint16_t getIP6len(unsigned char * packet){
 }
 void startSniffer(int fd) {
     rttFile = fopen("/storage/emulated/0/rtt.txt", "r+");
-    clock_gettime(CLOCK_REALTIME, &oldTime);
     /* set alarm for 10 seconds*/
     signal(SIGALRM, alarm_handler);
     alarm(10);
@@ -415,7 +427,8 @@ void startSniffer(int fd) {
 
                 if (udpMap.count(udpKey) == 0) {
                     struct sockaddr_in sin;
-                    //struct sockaddr_in6 sin6;
+                    // esta estructura no esta en in.h de android
+                    struct sockaddr_in6 sin6;
                     int udpSd;
                     int res;
                     if(ipVer==4) {
@@ -428,14 +441,12 @@ void startSniffer(int fd) {
                     }
 
                     if(ipVer==6){
-                        /*  udpSd= socket(AF_INET6, SOCK_DGRAM | SOCK_NONBLOCK, IPPROTO_UDP);
+                          udpSd= socket(AF_INET6, SOCK_DGRAM | SOCK_NONBLOCK, IPPROTO_UDP);
                           protect(udpSd);
-                          sin6.sin6_len = sizeof(sin6);
                           sin6.sin6_family = AF_INET6;
-                          sin6.sin6_addr.s6_addr = ipHdr.type.v6->ip6_dst.s6_addr;
+                          sin6.sin6_addr.in6_u = ipHdr.type.v6->ip6_dst.in6_u;
                           sin6.sin6_port= udpHdr->uh_dport;
                           res = connect(udpSd, (struct sockaddr *) &sin6, sizeof(sin6));
-                      */
                     }
 
 

@@ -31,25 +31,55 @@ void compute_ip_checksum(struct iphdr* iphdrp){
     iphdrp->check = compute_checksum((unsigned short*)iphdrp, iphdrp->ihl<<2);
 }
 
+
 /* set tcp checksum: given IP header and tcp segment */
 
 void compute_tcp_checksum(struct iphdr *pIph, unsigned short *ipPayload) {
+    uint8_t ipVer= 4;
     register unsigned long sum = 0;
     unsigned short tcpLen = ntohs(pIph->tot_len) - (pIph->ihl<<2);
     struct tcphdr *tcphdrp = (struct tcphdr*)(ipPayload);
     //add the pseudo header
-    //the source ip
-    sum += (pIph->saddr>>16)&0xFFFF;
-    sum += (pIph->saddr)&0xFFFF;
-    //the dest ip
-    sum += (pIph->daddr>>16)&0xFFFF;
-    sum += (pIph->daddr)&0xFFFF;
+    if(ipVer==4)
+    {
+        //the source ip
+        sum += (pIph->saddr >> 16) & 0xFFFF;
+        sum += (pIph->saddr) & 0xFFFF;
+        //the dest ip
+        sum += (pIph->daddr >> 16) & 0xFFFF;
+        sum += (pIph->daddr) & 0xFFFF;
+    }
+    // ipV6
+    /*if(ipVer==6)
+     {
+     //the source ip
+        sum+=(pIph->ip6_src>>112)&0xFFFF;
+        sum+=(pIph->ip6_src>> 96)&0xFFFF;
+        sum+= (pIph->ip6_src>> 80)&0xFFFF;
+        sum+= (pIph->ip6_src>> 64)&0xFFFF;
+        sum+= (pIph->ip6_src>> 48)&0xFFFF;
+        sum+= (pIph->ip6_src>> 32)&0xFFFF;
+        sum+=( pIph->ip6_src>> 16)&0xFFFF;
+        sum+= (pIph->ip6_src)&0xFFFF;
+        
+     //the dest ip
+        sum+=(pIph->ip6_dst>>112)&0xFFFF;
+        sum+=(pIph->ip6_dst>> 96)&0xFFFF;
+        sum+= (pIph->ip6_dst>> 80)&0xFFFF;
+        sum+= (pIph->ip6_dst>> 64)&0xFFFF;
+        sum+= (pIph->ip6_dst>> 48)&0xFFFF;
+        sum+= (pIph->ip6_dst>> 32)&0xFFFF;
+        sum+=( pIph->ip6_dst>> 16)&0xFFFF;
+        sum+= (pIph->ip6_dst)&0xFFFF;
+    }*/
+
     //protocol and reserved: 6
     sum += htons(IPPROTO_TCP);
     //the length
     sum += htons(tcpLen);
 
     //add the IP payload
+    // todo ipV6 payload
     //initialize checksum to 0
     tcphdrp->check = 0;
     while (tcpLen > 1) {
