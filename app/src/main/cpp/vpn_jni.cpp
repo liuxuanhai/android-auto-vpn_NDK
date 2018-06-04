@@ -97,9 +97,9 @@ void getRTT(TcpConnection *connection);
 void alarm_handler(int);
 uint16_t getIP6len(unsigned char * packet);
 
-void assignIpVersion(struct ips ipHdr, uint8_t * ipPacket, uint16_t * ipHdrLen, uint16_t * packetLen)
+void assignIpVersion(uint8_t ipVer, struct ips ipHdr, uint8_t * ipPacket, uint16_t * ipHdrLen, uint16_t * packetLen)
 {
-    uint8_t ipVer= ipPacket[0]>>4;
+
     if(ipVer== 4)
     {
         ipHdr.type.v4 = (struct ip *) ipPacket;
@@ -125,6 +125,7 @@ void sendPackets(VpnConnection *connection, int vpnFd) {
     uint16_t ipHdrLen;
     uint16_t packetLen;
     uint16_t udpHdrLen= 8;
+    uint8_t ipVer= connection->getVersion();
 
     if(connection->getProtocol() == IPPROTO_UDP) {
 
@@ -136,7 +137,7 @@ void sendPackets(VpnConnection *connection, int vpnFd) {
             //mandar solo datagram info
             uint8_t* ipPacket = udpConnection->queue.front();
 
-            assignIpVersion(ipHdr, ipPacket, &ipHdrLen, &packetLen);
+            assignIpVersion(ipVer,ipHdr, ipPacket, &ipHdrLen, &packetLen);
 
             uint16_t payloadDataLen = packetLen - ipHdrLen - udpHdrLen;
             uint8_t* packetData = ipPacket + ipHdrLen + udpHdrLen;
@@ -164,7 +165,7 @@ void sendPackets(VpnConnection *connection, int vpnFd) {
 
             uint8_t* ipPacket = tcpConnection->queue.front();
 
-            assignIpVersion(ipHdr, ipPacket, &ipHdrLen, &packetLen);
+            assignIpVersion(ipVer,ipHdr, ipPacket, &ipHdrLen, &packetLen);
 
             tcphdr* tcpHdr = (tcphdr*) (ipPacket + ipHdrLen);
 
@@ -452,7 +453,7 @@ void startSniffer(int fd) {
 
                     // __android_log_print(ANDROID_LOG_ERROR, "JNI ", "UDP Connect socket for: %s %d",
                     //ipDst.c_str(), res);
-                    UdpConnection *udpConnection = new UdpConnection(udpKey, udpSd, packet, ipHdrLen, udpHdrLen);
+                    UdpConnection *udpConnection = new UdpConnection(udpKey, udpSd,ipVer, packet, ipHdrLen, udpHdrLen);
                     udpMap.insert(std::make_pair(udpKey, udpConnection));
                     udpConnection->ev.events = EPOLLIN;
                     udpConnection->ev.data.ptr = udpConnection;
@@ -516,7 +517,7 @@ void startSniffer(int fd) {
 
                         int res = connect(tcpSd, (struct sockaddr *) &sin, sizeof(sin));
 
-                        TcpConnection *tcpConnection = new TcpConnection(tcpKey,ipDst, tcpSd, packet,
+                        TcpConnection *tcpConnection = new TcpConnection(tcpKey,ipDst, tcpSd,ipVer, packet,
                                                                          true, ipHdrLen, tcpHdrLen,
                                                                          payloadDataLen);
 
@@ -536,7 +537,7 @@ void startSniffer(int fd) {
                         tcpMap.insert(std::make_pair(tcpKey, tcpConnection));
 
                     } else if (tcpHdr->fin || tcpHdr->ack) {
-                        TcpConnection tcpConnection(tcpKey,ipDst, NULL, packet, false, ipHdrLen,
+                        TcpConnection tcpConnection(tcpKey,ipDst, NULL,ipVer, packet, false, ipHdrLen,
                                                     tcpHdrLen, payloadDataLen);
                         tcpConnection.currAck++;
                         tcpConnection.receiveAck(fd, TH_RST);
