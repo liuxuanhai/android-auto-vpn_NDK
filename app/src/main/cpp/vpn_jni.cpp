@@ -5,7 +5,6 @@
 #include <jni.h>
 #include <stdio.h>
 #include <linux/libc-compat.h>
-
 #include <sys/socket.h>
 #include <sys/stat.h>
 #include <sys/epoll.h>

@@ -28,11 +28,9 @@ static unsigned short compute_checksum(unsigned short *addr, unsigned int count)
 
 /* set ip checksum of a given ip header*/
 
-void compute_ip_checksum(uint8_t * ipHdr){
-    struct iphdr * iphdrp=(struct iphdr *) ipHdr;
+void compute_ip_checksum( struct iphdr* iphdrp){
     iphdrp->check = 0;
     iphdrp->check = compute_checksum((unsigned short*)iphdrp, iphdrp->ihl<<2);
-    //todo ipv6
 }
 
 
@@ -59,6 +57,7 @@ void compute_tcp_checksum(uint8_t * ipHdr, unsigned short *ipPayload, uint8_t ip
     if(ipVer==6){
 
         struct ip6_hdr *pIph= (ip6_hdr*) ipHdr;
+        tcpLen=ntohs(pIph->ip6_ctlun.ip6_un1.ip6_un1_plen) +20; //Payload len + tcp header len
         //todo ihl?
         //fis iphl
         //tcpLen= ntohs(pIph->ip6_ctlun.ip6_un1.ip6_un1_plen + 60) - (pIph->ihl<<2);
@@ -66,7 +65,6 @@ void compute_tcp_checksum(uint8_t * ipHdr, unsigned short *ipPayload, uint8_t ip
         unsigned char * s_addr =pIph->ip6_src.in6_u.u6_addr8;
         unsigned char * d_addr= pIph->ip6_src.in6_u.u6_addr8;
 
-     //the dest ip
         for(int i=0; i<15; i+=2)
         {
             //the source ip
@@ -103,21 +101,51 @@ void compute_tcp_checksum(uint8_t * ipHdr, unsigned short *ipPayload, uint8_t ip
 }
 
 /* set udp checksum: given IP header and udp segment */
-void compute_udp_checksum(struct iphdr *pIph, unsigned short *ipPayload){
+void compute_udp_checksum(uint8_t *ipHdr, unsigned short *ipPayload, uint8_t ipVer)
+{
     register unsigned long sum = 0;
-    unsigned short udpLen = ntohs(pIph->tot_len) - (pIph->ihl<<2);
-    struct udphdr *udphdrp = (struct udphdr*)(ipPayload);
-    //add the pseudo header
-    //the source ip
-    sum += (pIph->saddr>>16)&0xFFFF;
-    sum += (pIph->saddr)&0xFFFF;
-    //the dest ip
-    sum += (pIph->daddr>>16)&0xFFFF;
-    sum += (pIph->daddr)&0xFFFF;
-    //protocol and reserved: 6
-    sum += htons(IPPROTO_UDP);
-    //the length
-    sum += htons(udpLen);
+    unsigned short udpLen;
+    struct udphdr * udphdrp;
+    if(ipVer==4)
+    {
+        struct iphdr * pIph = (struct iphdr *) ipHdr;
+        udpLen = ntohs(pIph->tot_len) - (pIph->ihl<<2);
+        udphdrp = (struct udphdr*)(ipPayload);
+        //add the pseudo header
+        //the source ip
+        sum += (pIph->saddr>>16)&0xFFFF;
+        sum += (pIph->saddr)&0xFFFF;
+        //the dest ip
+        sum += (pIph->daddr>>16)&0xFFFF;
+        sum += (pIph->daddr)&0xFFFF;
+        //protocol and reserved: 6
+        sum += htons(IPPROTO_UDP);
+        //the length
+        sum += htons(udpLen);
+
+    }
+
+    else if (ipVer==6)
+    {
+        struct ip6_hdr * pIph = (struct ip6_hdr *) ipHdr;
+        udpLen = ntohs(pIph->ip6_ctlun.ip6_un1.ip6_un1_plen) +8; //payload len + udp header len
+        udphdrp = (struct udphdr*)(ipPayload);
+        unsigned char * s_addr =pIph->ip6_src.in6_u.u6_addr8;
+        unsigned char * d_addr= pIph->ip6_src.in6_u.u6_addr8;
+
+        for(int i=0; i<15; i+=2)
+        {
+            //the source ip
+            sum+=((uint16_t)s_addr[i])&0xFFFF;
+            //the dest ip
+            sum+=((uint16_t)d_addr[i])&0xFFFF;
+        }
+        sum += htons(IPPROTO_UDP);
+        //the length
+        sum += htons(udpLen);
+
+    }
+
 
     //add the IP payload
     //initialize checksum to 0
@@ -257,7 +285,7 @@ public:
             struct iphdr* ipHdr = (struct iphdr*) customHeaders;
             tcpHdr = (struct tcphdr*) (customHeaders + 20);
             ipHdr->tot_len = htons(40);
-            compute_ip_checksum((uint8_t *)ipHdr);
+            compute_ip_checksum(ipHdr);
             tcpHdr->th_flags = controlFlags;
             tcpHdr->ack_seq = htonl(currAck);
             tcpHdr->seq = htonl(currSeq);
@@ -267,7 +295,6 @@ public:
             struct ip6_hdr * ipHdr= (struct ip6_hdr *) customHeaders;
             tcpHdr = (struct tcphdr*) (customHeaders + 40);
             ipHdr->ip6_ctlun.ip6_un1.ip6_un1_plen = htons(60); // payloadlen
-            compute_ip_checksum((uint8_t *)ipHdr);
             tcpHdr->th_flags = controlFlags;
             tcpHdr->ack_seq = htonl(currAck);
             tcpHdr->seq = htonl(currSeq);
@@ -296,14 +323,14 @@ public:
             tcpHdr = (struct tcphdr*) (customHeaders + 20);
             ipHdr->id += htons(1);
             ipHdr->tot_len = htons(40 + packetLen);
-            compute_ip_checksum((uint8_t*)ipHdr);
+            compute_ip_checksum(ipHdr);
             tcpHdr->th_flags = TH_ACK | TH_PUSH;
             tcpHdr->ack_seq = htonl(currAck);
             tcpHdr->seq = htonl(currSeq);
             memcpy((customHeaders + 40), dataReceived, packetLen);
             compute_tcp_checksum((uint8_t*)ipHdr, (unsigned short *) tcpHdr, ipVer);
 
-            
+
             /*char buffer [2*(40 + packetLen)+1];
             buffer[2*(40 + packetLen)] = 0;
             for(int j = 0; j < (40 + packetLen); j++)
@@ -313,8 +340,9 @@ public:
         else if(ipVer==6){
             struct ip6_hdr *ipHdr= (struct ip6_hdr*)customHeaders;
             tcpHdr = (struct tcphdr*) (customHeaders + 40);
+            ipHdr->ip6_ctlun.ip6_un1.ip6_un1_flow+=htons(1); //flow label
             ipHdr->ip6_ctlun.ip6_un1.ip6_un1_plen = htons(packetLen); // payloadlen
-            compute_ip_checksum((uint8_t *)ipHdr);
+            ipHdr->ip6_ctlun.ip6_un1.ip6_un1_nxt =6;//next header TCP
             tcpHdr->th_flags = TH_ACK | TH_PUSH;
             tcpHdr->ack_seq = htonl(currAck);
             tcpHdr->seq = htonl(currSeq);
@@ -381,17 +409,37 @@ public:
 
     }
     void receiveData(int vpnFd, int packetLen) {
-        struct iphdr *ipHdr = (struct iphdr *) customHeaders;
-        struct udphdr *udpHdr = (struct udphdr *) (customHeaders + 20);
+        uint8_t ipVer= getVersion();
+        struct udphdr *udpHdr;
+        if(ipVer==4)
+        {
+            struct iphdr *ipHdr = (struct iphdr *) customHeaders;
+            udpHdr = (struct udphdr *) (customHeaders + 20);
 
-        ipHdr->id += htons(1);
-        ipHdr->tot_len = htons(28 + packetLen);
-        compute_ip_checksum((uint8_t *)ipHdr);
-        memcpy((customHeaders + 28), dataReceived, packetLen);
+            ipHdr->id += htons(1);
+            ipHdr->tot_len = htons(28 + packetLen);
+            compute_ip_checksum(ipHdr);
+            memcpy((customHeaders + 28), dataReceived, packetLen);
 
-        udpHdr->len = htons(packetLen + 8);
-        compute_udp_checksum(ipHdr, (unsigned short *) udpHdr);
-        write(vpnFd, customHeaders, (28 + packetLen));
+            udpHdr->len = htons(packetLen + 8);
+            compute_udp_checksum((uint8_t*)ipHdr, (unsigned short *) udpHdr, ipVer);
+            write(vpnFd, customHeaders, (28 + packetLen));
+        }
+        if(ipVer==6)
+        {
+            struct ip6_hdr *ipHdr=(struct ip6_hdr*) customHeaders;
+            udpHdr = (struct udphdr *)(customHeaders +40);
+
+            ipHdr->ip6_ctlun.ip6_un1.ip6_un1_flow+=htons(1); //flow label
+            ipHdr->ip6_ctlun.ip6_un1.ip6_un1_plen = htons(packetLen); // payloadlen
+            ipHdr->ip6_ctlun.ip6_un1.ip6_un1_nxt =17;//next header TCP
+            memcpy((customHeaders + 48), dataReceived, packetLen);
+
+            udpHdr->len = htons(packetLen + 8);
+            compute_udp_checksum((uint8_t *) ipHdr, (unsigned short *) udpHdr, ipVer);
+            write(vpnFd, customHeaders, (48 + packetLen));
+
+        }
     }
 
 };
