@@ -321,11 +321,9 @@ void startSniffer(int fd) {
     if (epollFd < 0)
         exit(EXIT_FAILURE); // report error
 
+
     std::string ipSrc, ipDst;
     std::string udpKey, tcpKey;
-    struct ips ipHdr;
-    uint16_t ipHdrLen;
-    uint16_t packetLen;
 
     unsigned char packet[65536];
     int bytes_read;
@@ -339,75 +337,37 @@ void startSniffer(int fd) {
                 break;
             }
 
-            uint8_t ipVer= packet[0]>>4;
+            uint8_t ipVer = 4;
 
-            if(ipVer== 4){
-                ipHdr.type.v4 = (struct ip *) packet;
-                ipHdrLen = (ipHdr.type.v4)->ip_hl * 4;
-                packetLen = ntohs((ipHdr.type.v4)->ip_len);
-                ipSrc = inet_ntoa((ipHdr.type.v4)->ip_src);
-                ipDst = inet_ntoa((ipHdr.type.v4)->ip_dst);
-            }
+            //TODO: ipv6
+            struct ip *ipHdr = (struct ip *) packet;
+            uint16_t ipHdrLen = ipHdr->ip_hl * 4;
+            uint16_t packetLen = ntohs(ipHdr->ip_len);
 
-            if(ipVer== 6){
-                char * Src =(char *)malloc(16);//or 32??
-                char * Dst= (char *)malloc(16);
-                ipHdr.type.v6 = (struct ip6_hdr*) packet;
-                uint16_t fixed_hdrlen= 40;
-                ipHdrLen= getIP6len(packet); // ipv6 fixed header len value
-
-                // packet len= payload data length + ip header length
-                packetLen= ntohs((ipHdr.type.v6)->ip6_ctlun.ip6_un1.ip6_un1_plen) + fixed_hdrlen;
-                inet_ntop(AF_INET, (const void *) &(ipHdr.type.v6->ip6_src),
-                          Src, INET6_ADDRSTRLEN);
-                inet_ntop(AF_INET, (const void *) &(ipHdr.type.v6->ip6_dst),
-                          Dst, INET6_ADDRSTRLEN);
-                std::string d(Dst);
-                std::string s(Src);
-                ipDst= d;
-                ipSrc= s;
-                free(Src);
-                free(Dst);
-
-            }
+            ipSrc = inet_ntoa(ipHdr->ip_src);
+            ipDst = inet_ntoa(ipHdr->ip_dst);
             // if UDP
 
             if (packet[9] == IPPROTO_UDP) {
 
                 struct udphdr *udpHdr = (struct udphdr *) (packet + ipHdrLen);
-                uint16_t udpHdrLen = udpHdr->uh_ulen * 4;
+                int udpHdrLen = udpHdr->uh_ulen * 4;
                 ipSrc = ipSrc + ":" + to_string(ntohs(udpHdr->uh_sport));
                 ipDst = ipDst + ":" + to_string(ntohs(udpHdr->uh_dport));
                 std::string udpKey = ipSrc + "+" + ipDst;
 
                 if (udpMap.count(udpKey) == 0) {
+                    int udpSd = socket(AF_INET, SOCK_DGRAM | SOCK_NONBLOCK, IPPROTO_UDP);
+                    protect(udpSd);
                     struct sockaddr_in sin;
-                    // esta estructura no esta en in.h de android
-                    struct sockaddr_in6 sin6;
-                    int udpSd;
-                    int res;
-                    if(ipVer==4) {
-                        udpSd = socket(AF_INET, SOCK_DGRAM | SOCK_NONBLOCK, IPPROTO_UDP);
-                        protect(udpSd);
-                        sin.sin_family = AF_INET;
-                        sin.sin_addr.s_addr = ipHdr.type.v4->ip_dst.s_addr;
-                        sin.sin_port = udpHdr->uh_dport;
-                        res = connect(udpSd, (struct sockaddr *) &sin, sizeof(sin));
-                    }
+                    sin.sin_family = AF_INET;
+                    sin.sin_addr.s_addr = ipHdr->ip_dst.s_addr;
+                    sin.sin_port = udpHdr->uh_dport;
+                    int res = connect(udpSd, (struct sockaddr *) &sin, sizeof(sin));
 
-                    if(ipVer==6){
-                          udpSd= socket(AF_INET6, SOCK_DGRAM | SOCK_NONBLOCK, IPPROTO_UDP);
-                          protect(udpSd);
-                          sin6.sin6_family = AF_INET6;
-                          sin6.sin6_addr.in6_u = ipHdr.type.v6->ip6_dst.in6_u;
-                          sin6.sin6_port= udpHdr->uh_dport;
-                          res = connect(udpSd, (struct sockaddr *) &sin6, sizeof(sin6));
-                    }
-
-
-                    // __android_log_print(ANDROID_LOG_ERROR, "JNI ", "UDP Connect socket for: %s %d",
-                    //ipDst.c_str(), res);
-                    UdpConnection *udpConnection = new UdpConnection(udpKey, udpSd,ipVer, packet, ipHdrLen, udpHdrLen);
+                    __android_log_print(ANDROID_LOG_ERROR, "JNI ", "UDP Connect socket for: %s %d",
+                                        ipDst.c_str(), res);
+                    UdpConnection *udpConnection = new UdpConnection(udpKey, udpSd, packet, ipHdrLen, udpHdrLen);
                     udpMap.insert(std::make_pair(udpKey, udpConnection));
                     udpConnection->ev.events = EPOLLIN;
                     udpConnection->ev.data.ptr = udpConnection;
@@ -431,6 +391,7 @@ void startSniffer(int fd) {
                     sendPackets(udpConnection, fd);
                 }
             }
+
                 // if TCP
             else if (packet[9] == IPPROTO_TCP) {
 
@@ -471,7 +432,7 @@ void startSniffer(int fd) {
 
                         int res = connect(tcpSd, (struct sockaddr *) &sin, sizeof(sin));
 
-                        TcpConnection *tcpConnection = new TcpConnection(tcpKey,ipDst, tcpSd,ipVer, packet,
+                        TcpConnection *tcpConnection = new TcpConnection(tcpKey,ipDst, tcpSd,packet,
                                                                          true, ipHdrLen, tcpHdrLen,
                                                                          payloadDataLen);
 
@@ -491,7 +452,7 @@ void startSniffer(int fd) {
                         tcpMap.insert(std::make_pair(tcpKey, tcpConnection));
 
                     } else if (tcpHdr->fin || tcpHdr->ack) {
-                        TcpConnection tcpConnection(tcpKey,ipDst, NULL,ipVer, packet, false, ipHdrLen,
+                        TcpConnection tcpConnection(tcpKey,ipDst, NULL, packet, false, ipHdrLen,
                                                     tcpHdrLen, payloadDataLen);
                         tcpConnection.currAck++;
                         tcpConnection.receiveAck(fd, TH_RST);
