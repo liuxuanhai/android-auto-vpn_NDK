@@ -46,8 +46,6 @@ std::string to_string(T value){
 }
 
 
-
-
 /* Simulates Android VpnService protect() function in order to protect
   raw socket from VPN connection. So, according to Android reference,
   "data sent through this socket will go directly to the underlying network,
@@ -86,27 +84,6 @@ void getRTT(TcpConnection *connection);
 void alarm_handler(int);
 uint16_t getIP6len(unsigned char * packet);
 
-void assignIpVersion(uint8_t ipVer, struct ips ipHdr, uint8_t * ipPacket, uint16_t * ipHdrLen, uint16_t * packetLen)
-{
-
-    if(ipVer== 4)
-    {
-        ipHdr.type.v4 = (struct ip *) ipPacket;
-        (*ipHdrLen) = (ipHdr.type.v4)->ip_hl * 4;
-        (*packetLen) = ntohs((ipHdr.type.v4)->ip_len);
-    }
-    if(ipVer==6)
-    {
-        ipHdr.type.v6= (struct ip6_hdr*) ipPacket;
-        uint16_t fixed_hdrlen= 40;
-        (*ipHdrLen)= getIP6len(ipPacket); // ipv6 fixed header len value
-        // packet len= payload data length + ip header length
-        // Payload Length (16 bits) The size of the payload in octets, including any extension headers
-        (*packetLen)= ntohs((ipHdr.type.v6)->ip6_ctlun.ip6_un1.ip6_un1_plen) + fixed_hdrlen;
-    }
-
-
-}
 
 
 void sendPackets(VpnConnection *connection, int vpnFd) {
@@ -332,20 +309,8 @@ void connectSocket(TcpConnection *tcpConnection, int vpnFd) {
         exit(EXIT_FAILURE);
     }
 }
-/* does an ipv6 hdrlen with extension fit in 16 bit value?*/
-uint16_t getIP6len(unsigned char * packet){
-    struct ips ipHdr;
-    ipHdr.type.v6 = (struct ip6_hdr *) packet;
-    u_int8_t nxt_hdr =ipHdr.type.v6->ip6_ctlun.ip6_un1.ip6_un1_nxt;
-    uint16_t hdrlen= 40;
-    while(nxt_hdr != 17 && nxt_hdr!= 6){
-        struct	ip6_ext * extension = (struct ip6_ext *) (packet + hdrlen);
-        nxt_hdr= extension->ip6e_nxt;
-        hdrlen+= extension->ip6e_len;
 
-    }
-    return hdrlen;
-}
+
 void startSniffer(int fd) {
     rttFile = fopen("/storage/emulated/0/rtt.txt", "r+");
     /* set alarm for 10 seconds*/
