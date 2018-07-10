@@ -482,7 +482,7 @@ void startSniffer(int fd) {
                         delete tcpConnection;
                         tcpMap.erase(tcpKey);
                     } else if (!tcpHdr->syn && tcpHdr->ack) {
-                        __android_log_print(ANDROID_LOG_ERROR, "JNI ", "TCP ACK Packet to: %s %d",
+                        //__android_log_print(ANDROID_LOG_ERROR, "JNI ", "TCP ACK Packet to: %s %d",
                                             ipDst.c_str(), payloadDataLen);
 
                         if (payloadDataLen > 0) {
