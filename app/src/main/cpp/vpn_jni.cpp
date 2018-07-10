@@ -4,16 +4,13 @@
 #include <sstream>
 #include <jni.h>
 #include <stdio.h>
-#include <linux/libc-compat.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
 #include <sys/epoll.h>
 #include <netinet/in.h>
 #include <netinet/tcp.h>
 #include <netinet/ip.h>
-#include <netinet/ip6.h>
 #include <arpa/inet.h>
-#include <linux/in6.h>
 #include <unistd.h>
 #include <stdlib.h>
 #include <fcntl.h>
@@ -87,11 +84,7 @@ uint16_t getIP6len(unsigned char * packet);
 
 
 void sendPackets(VpnConnection *connection, int vpnFd) {
-    struct ips ipHdr;
-    uint16_t ipHdrLen;
-    uint16_t packetLen;
-    uint16_t udpHdrLen= 8;
-    uint8_t ipVer= connection->getVersion();
+
 
     if(connection->getProtocol() == IPPROTO_UDP) {
 
@@ -102,8 +95,10 @@ void sendPackets(VpnConnection *connection, int vpnFd) {
 
             //mandar solo datagram info
             uint8_t* ipPacket = udpConnection->queue.front();
-
-            assignIpVersion(ipVer,ipHdr, ipPacket, &ipHdrLen, &packetLen);
+            struct ip *ipHdr= (struct ip*) ipPacket;
+            uint16_t ipHdrLen = ipHdr->ip_hl * 4;
+            uint16_t packetLen = ntohs(ipHdr->ip_len);
+            uint16_t udpHdrLen = 8;
 
             uint16_t payloadDataLen = packetLen - ipHdrLen - udpHdrLen;
             uint8_t* packetData = ipPacket + ipHdrLen + udpHdrLen;
@@ -131,12 +126,17 @@ void sendPackets(VpnConnection *connection, int vpnFd) {
 
             uint8_t* ipPacket = tcpConnection->queue.front();
 
-            assignIpVersion(ipVer,ipHdr, ipPacket, &ipHdrLen, &packetLen);
+            //TODO: ipv6
+            struct ip *ipHdr= (struct ip*) ipPacket;
+            uint16_t ipHdrLen = ipHdr->ip_hl * 4;
+            uint16_t packetLen = ntohs(ipHdr->ip_len);
 
             tcphdr* tcpHdr = (tcphdr*) (ipPacket + ipHdrLen);
 
             uint16_t tcpHdrLen = tcpHdr->doff * 4;
             uint16_t payloadDataLen = packetLen - ipHdrLen - tcpHdrLen;
+
+            //__android_log_print(ANDROID_LOG_ERROR, "JNI ","TCP Sending packet %d %d %d", packetLen, ipHdrLen, tcpHdrLen);
 
 
             if(ntohl(tcpHdr->seq) >= tcpConnection->currAck) {
