@@ -47,16 +47,6 @@ std::string to_string(T value){
 
 
 
-typedef struct ips{
-    union
-    {
-        struct ip * v4;
-        struct ip6_hdr * v6;
-    } type;
-
-} ips;
-
-
 
 /* Simulates Android VpnService protect() function in order to protect
   raw socket from VPN connection. So, according to Android reference,
