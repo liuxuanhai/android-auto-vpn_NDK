@@ -304,8 +304,6 @@ public:
 
 
 
-
-
         /*char buffer [81];
         buffer[80] = 0;
         for(int j = 0; j < 40; j++)

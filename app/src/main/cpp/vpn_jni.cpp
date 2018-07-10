@@ -454,6 +454,8 @@ void startSniffer(int fd) {
                     //ipDst.c_str(), res);
                     UdpConnection *udpConnection = new UdpConnection(udpKey, udpSd,ipVer, packet, ipHdrLen, udpHdrLen);
                     udpMap.insert(std::make_pair(udpKey, udpConnection));
+                    // debug
+                    __android_log_print(ANDROID_LOG_ERROR, "JNI ", "UDP map size %d", udpMap.size());
                     udpConnection->ev.events = EPOLLIN;
                     udpConnection->ev.data.ptr = udpConnection;
 
@@ -498,23 +500,23 @@ void startSniffer(int fd) {
                 std::string tcpKey = ipSrc + "+" + ipDst;
 
                 if (tcpMap.count(tcpKey) == 0) {
+
                     //__android_log_print(ANDROID_LOG_ERROR, "JNI ", "TCP Not found key: %s %x",
                     //tcpKey.c_str(), tcpHdr->th_flags & 0xff);
 
                     if (tcpHdr->syn && !tcpHdr->ack) {
+                        //ipv4
 
                         int tcpSd = socket(AF_INET, SOCK_STREAM | SOCK_NONBLOCK, 0);
                         protect(tcpSd);
-                        //__android_log_print(ANDROID_LOG_ERROR, "JNI ", "TCP Creating socket ");
-
                         struct sockaddr_in sin;
                         sin.sin_family = AF_INET;
-                        //ipv4
                         sin.sin_addr.s_addr = ipHdr.type.v4->ip_dst.s_addr;
-                        //todo ipv6
                         sin.sin_port = tcpHdr->dest;
-
                         int res = connect(tcpSd, (struct sockaddr *) &sin, sizeof(sin));
+
+                        // todo ipv6 !!!
+
 
                         TcpConnection *tcpConnection = new TcpConnection(tcpKey,ipDst, tcpSd,ipVer, packet,
                                                                          true, ipHdrLen, tcpHdrLen,
